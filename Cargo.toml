@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Region operations on rectilinear grids with arbitrary unit systems."
 license = "Apache-2.0"
+categories  = ["no-std", "wasm"]
 
 [dependencies]
 arbitrary-int = "2.1"
