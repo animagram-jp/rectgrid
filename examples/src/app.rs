@@ -65,7 +65,7 @@ impl App {
             Event::Ready             => handler.initial_draw(),
             Event::Canvas(e)         => handler.process(&e, pointer_state),
             Event::Gesture(g)        => handler.process_gesture(&g, pointer_state),
-            Event::Ugrid(e)          => handler.process_ugrid(&e),
+            Event::Rectgrid(e)          => handler.process_rectgrid(&e),
         }
     }
 }
