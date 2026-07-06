@@ -1,0 +1,30 @@
+[package]
+name = "rectgrid-example"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rectgrid = "0.1.0"
+arbitrary-int = "2.1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+  "console",
+  "WorkerGlobalScope",
+  "WorkerNavigator",
+] }
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+rand = "0.10"
+log = { version = "0.4", default-features = false, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dlmalloc  = { version = "0.2", features = ["global"] }
+
+[features]
+default    = []

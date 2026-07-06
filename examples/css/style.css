@@ -1,0 +1,30 @@
+#section {
+    position: relative;
+    height: 100vh;
+}
+
+#section > article {
+    position: absolute;
+    left: 0;
+    top: 0;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    padding: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 0.5rem;
+    background: #fff;
+    box-shadow: var(--elevation-2);
+}
+
+#section > article:active {
+    cursor: grabbing;
+    box-shadow: var(--elevation-5);
+}
+
+#section_article-3 {
+    width: 0;
+    height: 0;
+    min-width: 0;
+    overflow: hidden;
+}
