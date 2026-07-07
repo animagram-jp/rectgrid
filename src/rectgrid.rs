@@ -135,9 +135,10 @@ impl<const D: usize> RectGrid<D> {
         }).collect()
     }
 
-    /// 単一のboxの各辺長を1とした、符号付き局所座標(ratio)
+    /// `ξ_d = (point_d − base_d) / offset_d`
+    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)
     /// point/戻り値ともPxバリアント/Parameterバリアントであることは呼び出し規約とし、型上はf64配列。
-    pub fn get_ratio(&self, point: [f64; D], bx: BBox<D>) -> [Parameter; D] {
+    pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
         let (base, offset) = bx;
         from_fn(|i| {
             let base_px   = self.unit_to_px(i, &base[i]).unwrap_or(0.0);

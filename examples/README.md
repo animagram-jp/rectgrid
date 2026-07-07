@@ -2,10 +2,6 @@
 
 # Rectgrid
 
-## Rule
-
-- [common for projects](./docs/Rule.md)
-
 ## Commands
 
 ```bash
