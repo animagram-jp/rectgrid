@@ -13,6 +13,9 @@ use alloc::{vec::Vec, boxed::Box, rc::Rc};
 /// 原点から正方向へ無限に広がる、直交独立単位系。
 pub type Px = f64;
 
+/// 固有原点から正方向への序数を値として各軸で無限または有限に広がる、任意の直交単位系。
+/// pub type Unit = f64;
+
 /// Bondary Boxの1つに対して、各辺長を1とし、符号をunit座標に従った、無界な局所座標の単位系。
 pub type Parameter = f64;
 
