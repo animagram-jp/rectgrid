@@ -13,9 +13,6 @@ use alloc::{vec::Vec, boxed::Box, rc::Rc};
 /// 原点から正方向へ無限に広がる、直交独立単位系。
 pub type Px = f64;
 
-/// 固有原点から正方向への序数を値として各軸で無限または有限に広がる、任意の直交単位系。
-pub type Unit = f64;
-
 /// Bondary Boxの1つに対して、各辺長を1とし、符号をunit座標に従った、無界な局所座標の単位系。
 pub type Parameter = f64;
 
@@ -28,39 +25,14 @@ pub enum Unit {
 
 /// RectGridのaccumulator内でのみ使う、範囲外アクセスを示すエラー型。
 /// as_on_line側の有界判定（tの範囲）とは別軸の話であることに注意。
+#[derive(Debug)]
 pub struct OutOfIndex;
 
 pub type Point<const D: usize>  = [Unit; D];
 pub type BBox<const D: usize>    = (Point<D>, Point<D>); // (base, offset)
-/// Parameterバリアントの値であることは呼び出し側の規約とし、型上はf64配列として扱う。
-pub type Parameter<const D: usize>  = [f64; D];
-
-pub struct RectGrid<const D: usize> {
-    pub origin: [Px; D],
-    accumulator: [Option<Box<dyn Fn(Unit) -> Result<Px, OutOfIndex>>>; D]
-}
-
-impl<const D: usize> RectGrid<D> {
-    pub fn point_as_px(&self, point: &Vec<Point<D>>) -> Vec<[f64; D]> {
-        todo!("accumulatorを使ったPx変換を実装する")
-    }
-
-    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([f64; D], [f64; D])> {
-        todo!("accumulatorを使ったPx変換を実装する")
-    }
-
-    /// 単一のboxの各辺長を1とした、符号付き局所座標(ratio)
-    /// point/戻り値ともPxバリアント/Parameterバリアントであることは呼び出し規約とし、型上はf64配列。
-    pub fn get_ratio(&self, point: [f64; D], bx: BBox<D>) -> Parameter<D> {
-        todo!("box内での局所座標計算を実装する")
-    }
-}
 
 // todo: Option式は、幾何定義実装部
-pub type Region<const D: usize> = (Vec<BBox<D>>, Option(BBox<dyn Fn(u32) -> Result<Px, OutOfIndex>>));
-
-#[derive(Debug)]
-pub struct OutOfIndex;
+// pub type Region<const D: usize> = (Vec<BBox<D>>, Option<Box<dyn Fn(u32) -> Result<Px, OutOfIndex>>>);
 
 pub enum IncrementFunction {
     /// Fn(i) = points[i+1] - points[i]
@@ -77,12 +49,12 @@ pub enum IncrementFunction {
 impl IncrementFunction {
     /// 式から評価クロージャを生成する。f64 -> px座標(originとの相対距離)。
     /// 端数は線形補間でpxに変換する。
-    pub fn accumulate(&self) -> BBox<dyn Fn(f64) -> Result<Px, OutOfIndex>> {
+    pub fn accumulate(&self) -> Box<dyn Fn(f64) -> Result<Px, OutOfIndex>> {
         match self {
             // 差分を0..floor(x)で累積し、端数ぶんは次の差分を線形補間で加算。
             Self::ForwardDifference(f) => {
                 let f = f.clone();
-                BBox::new(move |x| {
+                Box::new(move |x| {
                     let n = x.floor() as u32;
                     let frac = x - n as f64;
                     let mut acc: Px = 0.0;
@@ -98,7 +70,7 @@ impl IncrementFunction {
             // 累積座標の配列。整数indexで引き、端数は隣との線形補間。範囲外は境界。
             Self::VectorList(pxs) => {
                 let pxs = pxs.clone();
-                BBox::new(move |x| {
+                Box::new(move |x| {
                     let n = x.floor() as usize;
                     let frac = x - n as f64;
                     let lo = *pxs.get(n).ok_or(OutOfIndex)?;
@@ -111,7 +83,7 @@ impl IncrementFunction {
             }
             Self::Scale(s) => {
                 let s = *s;
-                BBox::new(move |x| Ok(s * x))
+                Box::new(move |x| Ok(s * x))
             }
         }
     }
@@ -119,30 +91,67 @@ impl IncrementFunction {
 
 pub struct RectGrid<const D: usize> {
     pub origin: [Px; D],
-    accumulator: [Option<BBox<dyn Fn(Unit) -> Result<Px, OutOfIndex>>>; D]
+    accumulator: [Option<Box<dyn Fn(f64) -> Result<Px, OutOfIndex>>>; D],
 }
 
 impl<const D: usize> RectGrid<D> {
-    pub fn new(&mut self, origin: [Px; D], definitions: [IncrementFunction; D]) -> Self {
-			Self {
-                origin,
-                accumulator = todo!("iterate definitions[d].accumulate() for d: D")
-			}
+    pub fn new(origin: [Px; D], definitions: [IncrementFunction; D]) -> Self {
+        Self {
+            origin,
+            accumulator: definitions.map(|d| Some(d.accumulate())),
+        }
     }
 
-	pub fn set_definition(&mut self, definition: IncrementFunction, d: D) -> Self {
-            self.accumulator[d] = definition.accumulate();
-		}
+    pub fn set_definition(&mut self, definition: IncrementFunction, d: usize) {
+        self.accumulator[d] = Some(definition.accumulate());
+    }
+
+    fn eval(&self, i: usize, v: f64) -> Result<Px, OutOfIndex> {
+        self.accumulator[i].as_ref().ok_or(OutOfIndex)?(v)
+    }
+
+    fn unit_to_px(&self, i: usize, unit: &Unit) -> Result<Px, OutOfIndex> {
+        match unit {
+            Unit::Px(p)        => Ok(*p),
+            Unit::Unit(v)      => self.eval(i, *v),
+            Unit::Parameter(_) => Err(OutOfIndex),
+        }
+    }
+
+    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Px; D]> {
+        points.iter().map(|pt| {
+            from_fn(|i| self.unit_to_px(i, &pt[i]).unwrap_or(0.0))
+        }).collect()
+    }
+
+    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([Px; D], [Px; D])> {
+        boxes.iter().map(|(base, offset)| {
+            let base_px   = from_fn(|i| self.unit_to_px(i, &base[i]).unwrap_or(0.0));
+            let offset_px = from_fn(|i| self.unit_to_px(i, &offset[i]).unwrap_or(0.0));
+            (base_px, offset_px)
+        }).collect()
+    }
+
+    /// 単一のboxの各辺長を1とした、符号付き局所座標(ratio)
+    /// point/戻り値ともPxバリアント/Parameterバリアントであることは呼び出し規約とし、型上はf64配列。
+    pub fn get_ratio(&self, point: [f64; D], bx: BBox<D>) -> [Parameter; D] {
+        let (base, offset) = bx;
+        from_fn(|i| {
+            let base_px   = self.unit_to_px(i, &base[i]).unwrap_or(0.0);
+            let offset_px = self.unit_to_px(i, &offset[i]).unwrap_or(1.0);
+            if offset_px == 0.0 { 0.0 } else { (point[i] - base_px) / offset_px }
+        })
+    }
 
     pub fn as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), OutOfIndex>> {
-        let mut out = Vec::with_capacity(boxes.len());
-        for box in boxes {
-            let base   = self.accumulator(&box.0) + self.origin;
-            let offset = self.accumulator(&box.1) + self.origin;
-            out.push((base, offset));
-        }
-        Ok(out)
+        boxes.iter().map(|(base, offset)| -> Result<([Px; D], [Px; D]), OutOfIndex> {
+            let mut base_px   = [0.0f64; D];
+            let mut offset_px = [0.0f64; D];
+            for i in 0..D {
+                base_px[i]   = self.unit_to_px(i, &base[i])?;
+                offset_px[i] = self.unit_to_px(i, &offset[i])?;
+            }
+            Ok((base_px, offset_px))
+        }).collect()
     }
 }
-
-pub fn snap_floor(&mut self, extend: Option<[Unit; D]>) -> &mut Self
