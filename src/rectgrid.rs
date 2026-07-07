@@ -1,4 +1,8 @@
 // This file includes untranslated text (ja).
+
+use core::{primitive::{u32, usize, f64}, result::Result, array::from_fn};
+use alloc::{vec::Vec, boxed::Box, rc::Rc};
+
 // 前提: RectGrid自体は各次元D間のPxの関係性を扱わないが、幾何実装の上では、D間で各Pxは等しく出力される。
 
 // When treating the rectgrid module of x and y as 2D coordinates,
@@ -6,33 +10,30 @@
 // y represents the height direction in the viewport.
 // The origin (0,0) is assumed to be the top-left corner.
 
+/// 原点から正方向へ無限に広がる、直交独立単位系。
+pub type Px = f64;
+
+/// 固有原点から正方向への序数を値として各軸で無限または有限に広がる、任意の直交単位系。
+pub type Unit = f64;
+
+/// Bondary Boxの1つに対して、各辺長を1とし、符号をunit座標に従った、無界な局所座標の単位系。
+pub type Parameter = f64;
+
 #[derive(Clone, Copy)]
 pub enum Unit {
     Px(f64),
     Unit(f64),
-    Ratio(f64),
+    Parameter(f64),
 }
-
-pub type Px = f64;
 
 /// RectGridのaccumulator内でのみ使う、範囲外アクセスを示すエラー型。
 /// as_on_line側の有界判定（tの範囲）とは別軸の話であることに注意。
 pub struct OutOfIndex;
 
-impl Unit {
-    /// バリアントを問わず内包するf64を取り出す。
-    /// Px/Unit/Ratioの区別が要らない計算（as_on_line等）でのみ使う。
-    pub fn unwrap(self) -> f64 {
-        match self {
-            Unit::Px(v) | Unit::Unit(v) | Unit::Ratio(v) => v,
-        }
-    }
-}
-
 pub type Point<const D: usize>  = [Unit; D];
 pub type BBox<const D: usize>    = (Point<D>, Point<D>); // (base, offset)
-/// Ratioバリアントの値であることは呼び出し側の規約とし、型上はf64配列として扱う。
-pub type Ratio<const D: usize>  = [f64; D];
+/// Parameterバリアントの値であることは呼び出し側の規約とし、型上はf64配列として扱う。
+pub type Parameter<const D: usize>  = [f64; D];
 
 pub struct RectGrid<const D: usize> {
     pub origin: [Px; D],
@@ -49,29 +50,11 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// 単一のboxの各辺長を1とした、符号付き局所座標(ratio)
-    /// point/戻り値ともPxバリアント/Ratioバリアントであることは呼び出し規約とし、型上はf64配列。
-    pub fn get_ratio(&self, point: [f64; D], bx: BBox<D>) -> Ratio<D> {
+    /// point/戻り値ともPxバリアント/Parameterバリアントであることは呼び出し規約とし、型上はf64配列。
+    pub fn get_ratio(&self, point: [f64; D], bx: BBox<D>) -> Parameter<D> {
         todo!("box内での局所座標計算を実装する")
     }
 }
-
-use core::{
-	primitive::{u32, usize, f64},
-	result::Result,
-	array::from_fn
-};
-use alloc::{
-    vec::Vec,
-    boxed::BBox, 
-    rc::Rc
-};
-
-pub type Px    = f64;
-pub type Unit  = f64;
-pub type Ratio = f64;
-
-pub type Point<const D: usize>  = [Unit; D];
-pub type BBox<const D: usize>   = (Point<D>, Point<D>); // (base, offset)
 
 // todo: Option式は、幾何定義実装部
 pub type Region<const D: usize> = (Vec<BBox<D>>, Option(BBox<dyn Fn(u32) -> Result<Px, OutOfIndex>>));
@@ -126,7 +109,6 @@ impl IncrementFunction {
                     Ok(lo + (hi - lo) * frac)
                 })
             }
-            // 等間隔スケール。端数もそのまま乗る。境界なし。
             Self::Scale(s) => {
                 let s = *s;
                 BBox::new(move |x| Ok(s * x))
@@ -148,7 +130,6 @@ impl<const D: usize> RectGrid<D> {
 			}
     }
 
-    // todo: structにdefinitionsを追加し、accumulatorをOptionにすることで、originを含めたaffineアルゴリズムへaccumulator最適化可能にするか検討
 	pub fn set_definition(&mut self, definition: IncrementFunction, d: D) -> Self {
             self.accumulator[d] = definition.accumulate();
 		}
