@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use crate::js_client::{Command, Operation, EventType, Gesture, CanvasEvent, PointerState, dom::{Id, Tag}};
-use crate::rectgrid::{
+use crate::ugrid::{
     Rectgrid, DefiningExpression, Region, Length,
     hit_test, corner_test, pointer_down_offset, drag_resize, drag_translate, snap_region_to_unit, snap_point_to_unit,
 };
