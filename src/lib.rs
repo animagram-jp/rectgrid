@@ -2,8 +2,6 @@
 extern crate core;
 extern crate alloc;
 
-pub mod rectgrid;
-
 use core::{
     fmt::{self, Display},
     result::Result,
