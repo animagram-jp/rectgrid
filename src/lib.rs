@@ -2,20 +2,25 @@
 extern crate core;
 extern crate alloc;
 
-use core::{
-    fmt::{self, Display},
-    result::Result,
-};
+use core::fmt::{Display, Formatter, Result};
 
+mod rectgrid;
+pub use rectgrid::*;
+
+/// rectgridモジュール内のエラー。
+/// OutOfIndex: accumulator評価時の範囲外アクセス。範囲内に収まる最後の有効indexを持つ。
+/// InvalidDefinition: IncrementFunctionの定義が不正(VectorList(Vec::new())など)で評価クロージャを構築できない。
 #[derive(Debug, Clone)]
-pub enum Error {
-    Rectgrid,
+pub enum RectgridError {
+    OutOfIndex(u32),
+    InvalidDefinition,
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for RectgridError {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
-            Error::Rectgrid => write!(f, "invalid : ") // todo
+            RectgridError::OutOfIndex(last) => write!(f, "out of index: last valid index is {}", last),
+            RectgridError::InvalidDefinition => write!(f, "invalid definition"),
         }
     }
 }

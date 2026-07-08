@@ -131,7 +131,7 @@ impl<const D: usize> Rectgrid<D> {
     /// viewport等の外部px座標をoriginで補正し、グリッド原点基準のローカル座標に変換する。
     /// origin補正はRectgrid内部で完結させ、呼び出し側(event.rs等)に意識させないためのprivateヘルパー。
     fn to_local(&self, coord: [Px; D]) -> [Px; D] {
-        core::array::from_fn(|i| coord[i] - self.origin[i])
+        from_fn(|i| coord[i] - self.origin[i])
     }
 
     /// origin(グリッド原点のviewport上位置)を更新する。resize等でsectionの位置が変わった際に呼ぶ。

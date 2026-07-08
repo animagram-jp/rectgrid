@@ -24,12 +24,28 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ```bash
 # unit test
 cargo test
+
+# wasm build
+cd examples && wasm-pack build --target web --out-dir app --out-name app
 ```
+
+---
+
+## Public ports
+
+| Module | Port | Parameter | Return | Description |
+|-|-|-|-|-|
+| `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, OutOfIndex>>` | - | - |
+|                     | `VectorList` | `Vec<Px>` | - | - |
+|                     | `Scale` | `f64` | - | - |
+|                     | `accumulate` | - | `Box<dyn Fn(f64) -> Result<Px, OutOfIndex>>` | - |
+| `RectGrid` | `new`            | `origin: [Px; D], definitions: [IncrementFunction; D]` | - | - |
+|            | `set_definition` | `definition: IncrementFunction, d: usize` | - | - |
 
 ---
 
 # Ja
 
-- 各軸が独立した階差関数を持つ直交座標系(rectilinear grid: separable coordinates)の、固有の原点座標と各軸の階差関数を与単位で定義した任意単位系(unit: 一般単位)の格子上で、2点間座標領域(box)とその集合(region)を操作するための幾何計算モジュール。さらに、単一のboxの、各軸のベクトル長を1とした局所単位系(parameter)への変換関数により、任意の幾何による境界判定を実装可能にする。
+- 各軸が独立した階差関数を持つ直交座標系(rectilinear grid)の、固有の原点座標と各軸の階差関数を与単位で定義した任意単位系(unit: 一般単位)の格子上で、2点間座標領域(box)とその集合(region)を操作するための幾何計算モジュール。さらに、単一のboxの、各軸のベクトル長を1とした局所単位系(parameter)への変換関数により、任意の幾何による境界判定を実装可能にする。
 
 - 与単位系とは、原点の座標が(0,...,0), 全ての軸の階差関数が定数1を返す単位系を指す。単位名をPx(pixel: picture element)とする。

@@ -8,3 +8,4 @@ categories  = ["no-std", "wasm"]
 exclude = ["examples/"]
 
 [dependencies]
+libm = "0.2"
