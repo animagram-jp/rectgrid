@@ -63,21 +63,6 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 
 ---
 
-## Todo
-
-Ports present in `examples/src/ugrid.rs` (prior prototype) not yet ported to `src/rectgrid.rs`.
-
-| Module | Port | Parameter | Return | Description |
-|-|-|-|-|-|
-| - | `corner_test` | `rectgrid: &mut RectGrid<D>, coord: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>, threshold: f64` | `(Option<[f64; D]>, Option<[Option<bool>; D]>)` | 辺/角(リサイズハンドル)判定 |
-| - | `pointer_down_offset` | `rectgrid: &mut RectGrid<D>, coord: [Px; D], bx: &BBox<D>` | `Result<[Px; D], RectgridError>` | PointerDown時のドラッグオフセットを求める |
-| - | `drag_resize` | `rectgrid: &mut RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<(BBox<D>, [Px; D], [Px; D]), RectgridError>` | 角ハンドルドラッグでBBoxを更新 |
-| - | `drag_translate` | `rectgrid: &mut RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>` | `(BBox<D>, [Px; D])` | 移動ドラッグでBBoxのbaseを更新 |
-| - | `snap_region_to_unit` | `rectgrid: &mut RectGrid<D>, bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<(BBox<D>, [Px; D]), RectgridError>` | 面積持ちBBoxをUnit格子にスナップ |
-| - | `snap_point_to_unit` | `rectgrid: &mut RectGrid<D>, drag_px: [Px; D], snap: [Unit; D]` | `Result<(BBox<D>, [Px; D]), RectgridError>` | 点BBoxをUnit格子にスナップ |
-
----
-
 # Ja
 
 - 各軸が独立した階差関数を持つ直交座標系(rectilinear grid)の、固有の原点座標と各軸の階差関数を与単位で定義した任意単位系(unit: 一般単位)の格子上で、2点間座標領域(box)とその集合(region)を操作するための幾何計算モジュール。さらに、単一のboxの、各軸のベクトル長を1とした局所単位系(parameter)への変換関数により、任意の幾何による境界判定を実装可能にする。
