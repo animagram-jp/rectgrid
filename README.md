@@ -69,14 +69,6 @@ Ports present in `examples/src/ugrid.rs` (prior prototype) not yet ported to `sr
 
 | Module | Port | Parameter | Return | Description |
 |-|-|-|-|-|
-| `BBox<D>` | `snap_floor` | `extend: Option<[Unit; D]>` | `&mut Self` | base,offset(Point<D>ベース)のUnit成分をfloorして格子にスナップ |
-|           | `has_size` | - | `bool` | offsetのいずれかの軸が非ゼロUnitか |
-| `RectGrid` | `set_origin` | `origin: [Px; D]` | - | originの更新 |
-|            | `drag_offset` | `pointer: [Px; D], base_px: [Px; D]` | `[Px; D]` | ドラッグ開始オフセットを求める |
-|            | `drag_move` | `pointer: [Px; D], offset: [Px; D]` | `[Px; D]` | オフセットから現在位置を求める |
-|            | `judge` | `coord: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>, detail: bool` | `Result<Vec<Option<JudgeResult<D>>>, RectgridError>` | coordが各BBoxに内包されるか判定 |
-| `JudgeResult` | - | - | - | `Hit` または `Ratio([f64; D])` |
-| - | `hit_test` | `rectgrid: &mut RectGrid<D>, coord: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | 最前面からhitするBBoxのindexを返す |
 | - | `corner_test` | `rectgrid: &mut RectGrid<D>, coord: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>, threshold: f64` | `(Option<[f64; D]>, Option<[Option<bool>; D]>)` | 辺/角(リサイズハンドル)判定 |
 | - | `pointer_down_offset` | `rectgrid: &mut RectGrid<D>, coord: [Px; D], bx: &BBox<D>` | `Result<[Px; D], RectgridError>` | PointerDown時のドラッグオフセットを求める |
 | - | `drag_resize` | `rectgrid: &mut RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<(BBox<D>, [Px; D], [Px; D]), RectgridError>` | 角ハンドルドラッグでBBoxを更新 |

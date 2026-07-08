@@ -12,6 +12,11 @@ use crate::RectgridError;
 // y represents the height direction in the viewport.
 // The origin (0,0) is assumed to be the top-left corner.
 
+// px座標系の仕様: モジュール外部から関数引数として渡されるpx(point/pointer)はglobal(origin未補正の外部座標、
+// 例えばviewport座標)として受け取り、各関数の内部でoriginを差し引いてlocal化する。
+// 一方、box(base/offset)由来のpx(unit_to_pxの戻り値や、それを使うhit_test系・as_px系の戻り値)は
+// 常にlocal(origin=0を基準とした座標)を返す。呼び出し側がRectGridを跨いで再度渡す場合はlocal pxとして扱う。
+
 /// 単位系タグ付きのf64値。タグはゼロサイズで実行時表現には影響しない。
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
@@ -92,6 +97,28 @@ pub type Point<const D: usize>  = [Unit; D];
 pub struct BBox<const D: usize> {
     pub base:   Point<D>,
     pub offset: Point<D>,
+}
+
+impl<const D: usize> BBox<D> {
+    /// base/offsetをfloorして整数格子にスナップする。
+    /// extendはbaseにのみ適用し、floor前に加算する。
+    /// (例: extend=-0.5 → 0.5以上食い込んでいれば繰り上げ、未満なら切り捨て)
+    pub fn snap_floor(&mut self, extend: Option<[Unit; D]>) -> &mut Self {
+        for (d, u) in self.base.iter_mut().enumerate() {
+            let v = if let Some(ext) = extend { *u + ext[d] } else { *u };
+            *u = Unit::new(libm::floor(v.get()));
+        }
+        for u in self.offset.iter_mut() {
+            *u = Unit::new(libm::floor(u.get()));
+        }
+        self
+    }
+
+    /// offsetの全軸が非ゼロか(=幾何的な面積/体積を持つBBoxか)を返す。
+    /// いずれかの軸が0の場合、線分や点として面積を持たないとみなしfalseを返す。
+    pub fn has_size(&self) -> bool {
+        self.offset.iter().all(|u| u.get() != 0.0)
+    }
 }
 
 // todo: Option式は、幾何定義実装部
@@ -229,32 +256,91 @@ impl<const D: usize> RectGrid<D> {
         Ok(Unit::new((lo + hi) / 2.0))
     }
 
-    pub fn unit_to_px(&self, i: usize, unit: &Unit) -> Result<Px, RectgridError> {
-        self.accumulator[i](unit.get())
+    pub fn unit_to_px(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
+        self.accumulator[d](unit.get())
     }
 
     pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Px; D]> {
         points.iter().map(|pt| {
-            from_fn(|i| self.unit_to_px(i, &pt[i]).unwrap_or(Px::new(0.0)))
+            from_fn(|d| self.unit_to_px(d, &pt[d]).unwrap_or(Px::new(0.0)))
         }).collect()
     }
 
     pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([Px; D], [Px; D])> {
         boxes.iter().map(|bx| {
-            let base_px   = from_fn(|i| self.unit_to_px(i, &bx.base[i]).unwrap_or(Px::new(0.0)));
-            let offset_px = from_fn(|i| self.unit_to_px(i, &bx.offset[i]).unwrap_or(Px::new(0.0)));
+            let base_px   = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
+            let offset_px = from_fn(|d| self.unit_to_px(d, &bx.offset[d]).unwrap_or(Px::new(0.0)));
             (base_px, offset_px)
         }).collect()
     }
 
+    /// pointがboxes[i]に含まれるか(extend込み)を軸ごとに判定する。
+    /// pointはviewport座標のまま渡してよい(内部でoriginを差し引く)。
+    /// extendはunit座標のままbase/offsetに加算してからpx変換する
+    /// (accumulatorが非線形な場合、pxを個別に変換してから加算すると境界の位置によって幅がずれるため)。
+    /// 戻り値: (hitしたか, extend抜きのbase_px, extend抜きのoffset_px)。
+    /// base_px/offset_pxはhit後のratio計算にそのまま使い回せるよう、判定ついでに返す。
+    fn contains(&self, point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>) -> (bool, [Px; D], [Px; D]) {
+        let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
+        let base_px:   [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
+        let offset_px: [Px; D] = from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(0.0)));
+        let (lo, hi): ([Px; D], [Px; D]) = if let Some((eb, eo)) = extend {
+            (from_fn(|d| self.unit_to_px(d, &(bx.base[d] + eb[d])).unwrap_or(Px::new(0.0))),
+             from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d] + eo[d])).unwrap_or(Px::new(0.0))))
+        } else {
+            (base_px, offset_px)
+        };
+        let hit = (0..D).all(|d| local[d].get() >= lo[d].get() && local[d].get() <= hi[d].get());
+        (hit, base_px, offset_px)
+    }
+
     /// `ξ_d = (point_d − base_d) / offset_d`
-    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)
-    pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
-        from_fn(|i| {
-            let base_px   = self.unit_to_px(i, &bx.base[i]).unwrap_or(Px::new(0.0));
-            let offset_px = self.unit_to_px(i, &bx.offset[i]).unwrap_or(Px::new(1.0));
-            if offset_px.get() == 0.0 { Parameter::new(0.0) } else { Parameter::new((point[i] - base_px) / offset_px) }
+    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)。
+    /// base_px/offset_pxはunit座標のbase/base+offsetをpx変換した値(containsの戻り値と同じ形)。
+    fn ratio_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
+        from_fn(|d| {
+            let width = offset_px[d] - base_px[d];
+            if width.get() == 0.0 { Parameter::new(0.0) } else { Parameter::new((point[d] - base_px[d]) / width) }
         })
+    }
+
+    /// pointにhitするboxesのうち、indexが最大のものを返す(boxesはindexが大きいほど優先度が高いとみなす)。
+    /// 複数hitする場合はindexの大きい方を優先するため、末尾から走査する。
+    pub fn hit_test(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<usize> {
+        boxes.iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, bx)| self.contains(point, bx, extend).0.then_some(i))
+    }
+
+    /// hit_testと同様にindex最大のhitを返しつつ、hitしたboxに対するget_ratio相当の値も併せて返す。
+    /// ratioはextendの影響を受けない、box内側基準の比率(base側=0.0, offset側=1.0)。
+    pub fn hit_test_with_ratio(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<(usize, [Parameter; D])> {
+        let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
+        boxes.iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, bx)| {
+                let (hit, base_px, offset_px) = self.contains(point, bx, extend);
+                hit.then(|| (i, Self::ratio_from_px(local, base_px, offset_px)))
+            })
+    }
+
+    /// pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す。
+    pub fn hit_tests(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Vec<bool> {
+        boxes.iter()
+            .map(|bx| self.contains(point, bx, extend).0)
+            .collect()
+    }
+
+    /// `ξ_d = (point_d − base_d) / offset_d`
+    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)。
+    /// pointはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
+    pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
+        let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
+        let base_px   = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
+        let offset_px = from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(1.0)));
+        Self::ratio_from_px(local, base_px, offset_px)
     }
 
     pub fn as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
@@ -268,6 +354,126 @@ impl<const D: usize> RectGrid<D> {
             Ok((base_px, offset_px))
         }).collect()
     }
+
+    /// pointerのlocal座標(origin補正後)からzを差し引いた値を返す。
+    /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
+    /// drag開始時はzにbase_px(要素基準位置)を渡すとドラッグオフセットが、
+    /// drag中はzにそのオフセットを渡すと現在の要素基準位置が求まる。
+    pub fn offset(&self, pointer: [Px; D], z: [Px; D]) -> [Px; D] {
+        from_fn(|d| (pointer[d] - self.origin[d]) - z[d])
+    }
+}
+
+// ============================================================
+// pointer / drag interaction (stateless helpers)
+//
+// RectGrid<D>とBBox<D>のみに依存する、状態を持たない純粋関数群。
+// いずれも&RectGridのみ要求する(RectGridのaccumulatorはnew()時点で構築済みで、
+// 呼び出しごとに内部状態を変更する必要がないため)。
+// BBoxはbase/offsetが常にUnitで、Px/Unitが混在する中間状態を表現できないため、
+// drag中のpx位置はBBoxを更新せず戻り値としてのみ返す。呼び出し側がdrag中はpxを保持し、
+// DragEnd相当のタイミングでsnap_*関数に通してBBox(Unit)へ確定させる。
+// ============================================================
+
+/// 面積を持つBBoxに対し、pointが辺付近(閾値threshold未満)にあるかを軸ごとに判定する。
+/// 戻り値は(各軸のratio(取得できた場合), 角判定結果)のペア。
+/// 角判定結果の各要素: Some(true)=base側の辺付近([0, threshold]), Some(false)=offset側の辺付近([1-threshold, 1]), None=非該当。
+/// 全軸がSomeの場合のみ角ハンドルとして扱う(呼び出し側でNoneを許容するかは呼び出し側の判断)。
+/// ratioがNoneになるのは、has_sizeでないか、pointがbx範囲外の場合。
+pub fn corner_test<const D: usize>(
+    grid:      &RectGrid<D>,
+    point:     [Px; D],
+    bx:        &BBox<D>,
+    threshold: f64,
+) -> (Option<[Parameter; D]>, Option<[Option<bool>; D]>) {
+    if !bx.has_size() { return (None, None); }
+    let ratio = grid.get_ratio(point, *bx);
+    let inside = ratio.iter().all(|r| r.get() >= 0.0 && r.get() <= 1.0);
+    if !inside { return (None, None); }
+    let corner: [Option<bool>; D] = from_fn(|d| {
+        let r = ratio[d].get();
+        if r <= threshold { Some(true) }
+        else if r >= 1.0 - threshold { Some(false) }
+        else { None }
+    });
+    let corner = if corner.iter().all(Option::is_some) { Some(corner) } else { None };
+    (Some(ratio), corner)
+}
+
+/// Drag中、角ハンドルドラッグによってBBoxのbase/offsetを更新し、更新後のBBoxを返す。
+/// corner[d] = Some(base_side): base_side==trueならbase側の辺を、falseならoffset側の辺を動かす。
+/// 新しいoffsetは最小1.0unitを保証する(base/offsetが交差しないように)。
+pub fn drag_resize<const D: usize>(
+    grid:    &RectGrid<D>,
+    pointer: [Px; D],
+    bx:      &BBox<D>,
+    corner:  [Option<bool>; D],
+) -> Result<BBox<D>, RectgridError> {
+    let unit = grid.point_to_unit(pointer);
+    let mut resized = *bx;
+    for d in 0..D {
+        let Some(base_side) = corner[d] else { continue };
+        let new_u = Unit::new(libm::floor(unit[d]?.get()));
+        let base_u   = bx.base[d];
+        let offset_u = bx.offset[d];
+        if base_side {
+            let new_offset = ((base_u + offset_u) - new_u).get().max(1.0);
+            resized.base[d]   = new_u;
+            resized.offset[d] = Unit::new(new_offset);
+        } else {
+            let new_offset = (new_u - base_u).get().max(1.0);
+            resized.offset[d] = Unit::new(new_offset);
+        }
+    }
+    Ok(resized)
+}
+
+/// Drag中、移動ドラッグ(角ハンドルでない)によってbaseのpx位置を求める。
+/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
+/// BBoxはbaseが常にUnitのため、drag中のpx位置はBBoxを更新せずここで返すのみに留め、
+/// DragEnd相当のタイミングでsnap_region_to_unitに通してBBoxへ反映する。
+pub fn drag_translate<const D: usize>(
+    grid:        &RectGrid<D>,
+    pointer:     [Px; D],
+    drag_offset: [Px; D],
+) -> [Px; D] {
+    grid.offset(pointer, drag_offset)
+}
+
+/// DragEnd時、面積を持つBBoxの移動ドラッグ結果をUnit格子にスナップし、更新後のBBox(base)を返す。
+/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
+/// extendはunit変換値にfloor前に加算する。
+pub fn snap_region_to_unit<const D: usize>(
+    grid:        &RectGrid<D>,
+    pointer:     [Px; D],
+    drag_offset: [Px; D],
+    bx:          &BBox<D>,
+    extend:      Option<[Unit; D]>,
+) -> Result<BBox<D>, RectgridError> {
+    let mut snapped = *bx;
+    for d in 0..D {
+        let local = pointer[d] - grid.origin[d] - drag_offset[d];
+        snapped.base[d] = grid.px_to_unit_axis(d, local)?;
+    }
+    snapped.snap_floor(extend);
+    Ok(snapped)
+}
+
+/// DragEnd時、点BBox(面積なし)の移動ドラッグ結果をUnit格子にスナップしたBBoxを求める。
+/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
+pub fn snap_point_to_unit<const D: usize>(
+    grid:        &RectGrid<D>,
+    pointer:     [Px; D],
+    drag_offset: [Px; D],
+    snap:        [Unit; D],
+) -> Result<BBox<D>, RectgridError> {
+    let mut base: Point<D> = [Unit::new(0.0); D];
+    for d in 0..D {
+        let local = pointer[d] - grid.origin[d] - drag_offset[d];
+        let u = grid.px_to_unit_axis(d, local)?;
+        base[d] = Unit::new(libm::floor((u + snap[d]).get()));
+    }
+    Ok(BBox { base, offset: from_fn(|_| Unit::new(0.0)) })
 }
 
 #[cfg(test)]
