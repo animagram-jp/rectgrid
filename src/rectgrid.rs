@@ -87,7 +87,12 @@ pub type Unit = Value<UnitTag>;
 pub type Parameter = Value<ParameterTag>;
 
 pub type Point<const D: usize>  = [Unit; D];
-pub type BBox<const D: usize>   = (Point<D>, Point<D>); // (base, offset)
+
+#[derive(Clone, Copy)]
+pub struct BBox<const D: usize> {
+    pub base:   Point<D>,
+    pub offset: Point<D>,
+}
 
 // todo: Option式は、幾何定義実装部
 // pub type Region<const D: usize> = (Vec<BBox<D>>, Option<Box<dyn Fn(u32) -> Result<Px, RectgridError>>>);
@@ -176,11 +181,55 @@ impl<const D: usize> RectGrid<D> {
         Ok(())
     }
 
+    /// pxをunitへ数値的に逆変換する(accumulatorはUnit→Pxの一方向クロージャしか持たないため)。
+    /// pointはviewport等の外部px座標のまま渡してよい。originを差し引いたローカル座標に補正してから変換する。
+    /// 呼び出し側の契約: 各軸のaccumulatorはUnit>=0の範囲で単調非減少であること。
+    /// 単調非減少でない場合(Scaleへ負の値を与えた場合やForwardDifferenceが減少する差分を返す場合)は結果を保証しない。
     pub fn point_to_unit(&self, point: [Px; D]) -> [Result<Unit, RectgridError>; D] {
-        todo!()
+        from_fn(|i| self.px_to_unit_axis(i, point[i] - self.origin[i]))
     }
 
-    fn unit_to_px(&self, i: usize, unit: &Unit) -> Result<Px, RectgridError> {
+    fn px_to_unit_axis(&self, i: usize, target: Px) -> Result<Unit, RectgridError> {
+        let target = target.get();
+        let f = |x: f64| self.accumulator[i](x);
+
+        let mut lo = 0.0;
+        let mut hi = 1.0;
+        loop {
+            match f(hi) {
+                Ok(px) if px.get() >= target => break,
+                Ok(_) => {
+                    lo = hi;
+                    hi *= 2.0;
+                }
+                // 定義域の終端に達した。targetがそこまでの範囲内で到達可能か確認する。
+                Err(RectgridError::OutOfIndex(last)) => {
+                    hi = last as f64;
+                    if f(hi)?.get() < target {
+                        return Err(RectgridError::OutOfIndex(last));
+                    }
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        const EPSILON: f64 = 1e-9;
+        for _ in 0..64 {
+            if hi - lo < EPSILON {
+                break;
+            }
+            let mid = (lo + hi) / 2.0;
+            if f(mid)?.get() < target {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Ok(Unit::new((lo + hi) / 2.0))
+    }
+
+    pub fn unit_to_px(&self, i: usize, unit: &Unit) -> Result<Px, RectgridError> {
         self.accumulator[i](unit.get())
     }
 
@@ -191,9 +240,9 @@ impl<const D: usize> RectGrid<D> {
     }
 
     pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([Px; D], [Px; D])> {
-        boxes.iter().map(|(base, offset)| {
-            let base_px   = from_fn(|i| self.unit_to_px(i, &base[i]).unwrap_or(Px::new(0.0)));
-            let offset_px = from_fn(|i| self.unit_to_px(i, &offset[i]).unwrap_or(Px::new(0.0)));
+        boxes.iter().map(|bx| {
+            let base_px   = from_fn(|i| self.unit_to_px(i, &bx.base[i]).unwrap_or(Px::new(0.0)));
+            let offset_px = from_fn(|i| self.unit_to_px(i, &bx.offset[i]).unwrap_or(Px::new(0.0)));
             (base_px, offset_px)
         }).collect()
     }
@@ -201,23 +250,75 @@ impl<const D: usize> RectGrid<D> {
     /// `ξ_d = (point_d − base_d) / offset_d`
     /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)
     pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
-        let (base, offset) = bx;
         from_fn(|i| {
-            let base_px   = self.unit_to_px(i, &base[i]).unwrap_or(Px::new(0.0));
-            let offset_px = self.unit_to_px(i, &offset[i]).unwrap_or(Px::new(1.0));
+            let base_px   = self.unit_to_px(i, &bx.base[i]).unwrap_or(Px::new(0.0));
+            let offset_px = self.unit_to_px(i, &bx.offset[i]).unwrap_or(Px::new(1.0));
             if offset_px.get() == 0.0 { Parameter::new(0.0) } else { Parameter::new((point[i] - base_px) / offset_px) }
         })
     }
 
     pub fn as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
-        boxes.iter().map(|(base, offset)| -> Result<([Px; D], [Px; D]), RectgridError> {
+        boxes.iter().map(|bx| -> Result<([Px; D], [Px; D]), RectgridError> {
             let mut base_px   = [Px::new(0.0); D];
             let mut offset_px = [Px::new(0.0); D];
             for i in 0..D {
-                base_px[i]   = self.unit_to_px(i, &base[i])?;
-                offset_px[i] = self.unit_to_px(i, &offset[i])?;
+                base_px[i]   = self.unit_to_px(i, &bx.base[i])?;
+                offset_px[i] = self.unit_to_px(i, &bx.offset[i])?;
             }
             Ok((base_px, offset_px))
         }).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_to_unit_scale_roundtrip() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        let result = grid.point_to_unit([Px::new(450.0), Px::new(10.0)]);
+        let x = result[0].as_ref().unwrap().get();
+        let y = result[1].as_ref().unwrap().get();
+        assert!((x - 2.25).abs() < 1e-6, "x = {}", x);
+        assert!((y - 0.15625).abs() < 1e-6, "y = {}", y);
+    }
+
+    #[test]
+    fn point_to_unit_vector_list_roundtrip() {
+        let grid = RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0), Px::new(60.0)])],
+        ).unwrap();
+        let result = grid.point_to_unit([Px::new(45.0)]);
+        let x = result[0].as_ref().unwrap().get();
+        assert!((x - 2.5).abs() < 1e-6, "x = {}", x);
+    }
+
+    #[test]
+    fn point_to_unit_vector_list_out_of_range() {
+        let grid = RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0), Px::new(60.0)])],
+        ).unwrap();
+        let result = grid.point_to_unit([Px::new(100.0)]);
+        assert!(matches!(result[0], Err(RectgridError::OutOfIndex(3))));
+    }
+
+    #[test]
+    fn point_to_unit_applies_origin_offset() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(10.0), Px::new(20.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        // viewport座標(230, 50)は、origin(10, 20)を差し引くとローカル座標(220, 30)
+        let result = grid.point_to_unit([Px::new(230.0), Px::new(50.0)]);
+        let x = result[0].as_ref().unwrap().get();
+        let y = result[1].as_ref().unwrap().get();
+        assert!((x - 1.1).abs() < 1e-6, "x = {}", x);
+        assert!((y - 0.46875).abs() < 1e-6, "y = {}", y);
     }
 }
