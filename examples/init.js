@@ -71,6 +71,7 @@ function execute({ operation, id, attribute, value }) {
     case 13: el.close(); break;
     case 14: el.focus(); break;
     case 15: jsFn[value]?.(el); break;
+    case 16: el.style.cursor = value ?? ""; break;
   }
 }
 

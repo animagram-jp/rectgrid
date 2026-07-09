@@ -359,7 +359,7 @@ impl<const D: usize> RectGrid<D> {
     /// extendはunit座標のままbase/offsetに加算してからpx変換する
     /// (accumulatorが非線形な場合、pxを個別に変換してから加算すると境界の位置によって幅がずれるため)。
     /// 戻り値: (hitしたか, extend抜きのbase_px, extend抜きのoffset_px)。
-    /// base_px/offset_pxはhit後のratio計算にそのまま使い回せるよう、判定ついでに返す。
+    /// base_px/offset_pxはhit後のparameter計算にそのまま使い回せるよう、判定ついでに返す。
     fn contains(&self, point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>) -> (bool, [Px; D], [Px; D]) {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         let base_px:   [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
@@ -375,9 +375,9 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
-    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)。
+    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(parameter)。
     /// base_px/offset_pxはunit座標のbase/base+offsetをpx変換した値(containsの戻り値と同じ形)。
-    fn ratio_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
+    fn parameter_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
         from_fn(|d| {
             let width = offset_px[d] - base_px[d];
             if width.get() == 0.0 { Parameter::new(0.0) } else { Parameter::new((point[d] - base_px[d]) / width) }
@@ -410,8 +410,8 @@ impl<const D: usize> RectGrid<D> {
             .find_map(|(i, bx)| self.contains(point, bx, extend).0.then_some(i))
     }
 
-    /// hit_testと同様にindex最大のhitを返しつつ、hitしたboxに対するget_ratio相当の値も併せて返す。
-    /// ratioはextendの影響を受けない、box内側基準の比率(base側=0.0, offset側=1.0)。
+    /// hit_testと同様にindex最大のhitを返しつつ、hitしたboxに対するget_parameter相当の値も併せて返す。
+    /// parameterはextendの影響を受けない、box内側基準の比率(base側=0.0, offset側=1.0)。
     ///
     /// ```
     /// extern crate alloc;
@@ -421,20 +421,20 @@ impl<const D: usize> RectGrid<D> {
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
     /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] }];
-    /// // box中央(100, 32)pxはratio(0.5, 0.5)
-    /// let (i, ratio) = grid.hit_test_with_ratio([Px::new(100.0), Px::new(32.0)], &boxes, None).unwrap();
+    /// // box中央(100, 32)pxはparameter(0.5, 0.5)
+    /// let (i, parameter) = grid.hit_test_with_parameter([Px::new(100.0), Px::new(32.0)], &boxes, None).unwrap();
     /// assert_eq!(i, 0);
-    /// assert!((ratio[0].get() - 0.5).abs() < 1e-9);
-    /// assert!((ratio[1].get() - 0.5).abs() < 1e-9);
+    /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
+    /// assert!((parameter[1].get() - 0.5).abs() < 1e-9);
     /// ```
-    pub fn hit_test_with_ratio(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<(usize, [Parameter; D])> {
+    pub fn hit_test_with_parameter(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<(usize, [Parameter; D])> {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         boxes.iter()
             .enumerate()
             .rev()
             .find_map(|(i, bx)| {
                 let (hit, base_px, offset_px) = self.contains(point, bx, extend);
-                hit.then(|| (i, Self::ratio_from_px(local, base_px, offset_px)))
+                hit.then(|| (i, Self::parameter_from_px(local, base_px, offset_px)))
             })
     }
 
@@ -462,7 +462,7 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
-    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)。
+    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(parameter)。
     /// pointはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
     ///
     /// ```
@@ -473,18 +473,18 @@ impl<const D: usize> RectGrid<D> {
     /// ).unwrap();
     /// let bx = BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] };
     /// // boxはx: 200..400px, y: 0..64px。(300, 16)pxは各軸の1/4地点
-    /// let ratio = grid.get_ratio([Px::new(300.0), Px::new(16.0)], bx);
-    /// assert!((ratio[0].get() - 0.5).abs() < 1e-9);
-    /// assert!((ratio[1].get() - 0.25).abs() < 1e-9);
-    /// // box範囲外(base側)はratioが負になる
-    /// let ratio = grid.get_ratio([Px::new(100.0), Px::new(0.0)], bx);
-    /// assert!((ratio[0].get() - (-0.5)).abs() < 1e-9);
+    /// let parameter = grid.get_parameter([Px::new(300.0), Px::new(16.0)], bx);
+    /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
+    /// assert!((parameter[1].get() - 0.25).abs() < 1e-9);
+    /// // box範囲外(base側)はparameterが負になる
+    /// let parameter = grid.get_parameter([Px::new(100.0), Px::new(0.0)], bx);
+    /// assert!((parameter[0].get() - (-0.5)).abs() < 1e-9);
     /// ```
-    pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
+    pub fn get_parameter(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         let base_px   = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
         let offset_px = from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(1.0)));
-        Self::ratio_from_px(local, base_px, offset_px)
+        Self::parameter_from_px(local, base_px, offset_px)
     }
 
     /// 複数のBBoxを(base_px, offset_px)へ変換する。offset_pxはbase位置を踏まえた実際の辺の長さ
@@ -545,10 +545,11 @@ impl<const D: usize> RectGrid<D> {
 // ============================================================
 
 /// 面積を持つBBoxに対し、pointが辺付近(閾値threshold未満)にあるかを軸ごとに判定する。
-/// 戻り値は(各軸のratio(取得できた場合), 角判定結果)のペア。
+/// 戻り値は(各軸のparameter(取得できた場合), 角判定結果)のペア。
 /// 角判定結果の各要素: Some(true)=base側の辺付近([0, threshold]), Some(false)=offset側の辺付近([1-threshold, 1]), None=非該当。
-/// 全軸がSomeの場合のみ角ハンドルとして扱う(呼び出し側でNoneを許容するかは呼び出し側の判断)。
-/// ratioがNoneになるのは、has_sizeでないか、pointがbx範囲外の場合。
+/// 少なくとも1軸がSomeであればハンドル判定として扱う(全軸Some=角、1軸のみSome=辺)。
+/// 全軸Noneの場合はハンドル対象外としてNoneを返す(呼び出し側は移動ドラッグ等にフォールバックする)。
+/// parameterがNoneになるのは、has_sizeでないか、pointがbx範囲外の場合。
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
@@ -560,13 +561,16 @@ impl<const D: usize> RectGrid<D> {
 /// // bx左上隅(400, 0)px付近をクリック → base側同士の角
 /// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1);
 /// assert_eq!(corner, Some([Some(true), Some(true)]));
-/// // bx中央付近は角に該当しないが、ratio自体は取得できる
-/// let (ratio, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1);
-/// assert!(ratio.is_some());
+/// // bx上辺中央付近(x中央、y=base側)をクリック → y軸のみのhandle(辺ドラッグ)
+/// let (_, corner) = corner_test(&grid, [Px::new(500.0), Px::new(0.0)], &bx, 0.1);
+/// assert_eq!(corner, Some([None, Some(true)]));
+/// // bx中央付近は辺にも角にも該当しないが、parameter自体は取得できる
+/// let (parameter, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1);
+/// assert!(parameter.is_some());
 /// assert_eq!(corner, None);
-/// // bx範囲外はratioも取得できない
-/// let (ratio, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1);
-/// assert!(ratio.is_none());
+/// // bx範囲外はparameterも取得できない
+/// let (parameter, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1);
+/// assert!(parameter.is_none());
 /// assert_eq!(corner, None);
 /// ```
 pub fn corner_test<const D: usize>(
@@ -576,17 +580,17 @@ pub fn corner_test<const D: usize>(
     threshold: f64,
 ) -> (Option<[Parameter; D]>, Option<[Option<bool>; D]>) {
     if !bx.has_size() { return (None, None); }
-    let ratio = grid.get_ratio(point, *bx);
-    let inside = ratio.iter().all(|r| r.get() >= 0.0 && r.get() <= 1.0);
+    let parameter = grid.get_parameter(point, *bx);
+    let inside = parameter.iter().all(|r| r.get() >= 0.0 && r.get() <= 1.0);
     if !inside { return (None, None); }
     let corner: [Option<bool>; D] = from_fn(|d| {
-        let r = ratio[d].get();
+        let r = parameter[d].get();
         if r <= threshold { Some(true) }
         else if r >= 1.0 - threshold { Some(false) }
         else { None }
     });
-    let corner = if corner.iter().all(Option::is_some) { Some(corner) } else { None };
-    (Some(ratio), corner)
+    let corner = if corner.iter().any(Option::is_some) { Some(corner) } else { None };
+    (Some(parameter), corner)
 }
 
 /// Drag中、角ハンドルドラッグによってBBoxのbase/offsetを更新し、更新後のBBoxを返す。
@@ -804,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn hit_test_with_ratio_no_hit() {
+    fn hit_test_with_parameter_no_hit() {
         let grid = RectGrid::<2>::new(
             [Px::new(0.0), Px::new(0.0)],
             [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
@@ -812,7 +816,7 @@ mod tests {
         let boxes = alloc::vec![
             BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
         ];
-        assert!(grid.hit_test_with_ratio([Px::new(500.0), Px::new(10.0)], &boxes, None).is_none());
+        assert!(grid.hit_test_with_parameter([Px::new(500.0), Px::new(10.0)], &boxes, None).is_none());
     }
 
     #[test]

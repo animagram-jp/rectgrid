@@ -22,6 +22,7 @@ pub enum Operation {
     CloseModal,
     Focus,
     JsFn,
+    SetCursor,
 }
 
 impl Operation {
@@ -42,6 +43,7 @@ impl Operation {
             Self::CloseModal      => 13,
             Self::Focus           => 14,
             Self::JsFn            => 15,
+            Self::SetCursor       => 16,
         }
     }
 }

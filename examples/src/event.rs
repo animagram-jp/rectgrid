@@ -99,8 +99,8 @@ impl Handler {
                 // 角判定を最優先、次いでDOM hit、最後にBBox内部hit
                 self.drag_corner = None;
                 let corner: Option<[Option<bool>; 2]> = hit_i.and_then(|i| {
-                    let (ratio, corner) = corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD);
-                    crate::debug_log!("rectgrid ratio: {:?}, corner: {:?}", ratio.map(|r| r.map(|p| p.get())), corner);
+                    let (parameter, corner) = corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD);
+                    crate::debug_log!("rectgrid parameter: {:?}, corner: {:?}", parameter.map(|r| r.map(|p| p.get())), corner);
                     corner
                 });
                 let target = if corner.is_some() {
@@ -122,6 +122,9 @@ impl Handler {
                     let top_z = self.articles.len();
                     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                     cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&top_z.to_string())));
+                    if let Some(cursor) = corner_cursor(self.drag_corner) {
+                        cmds.push(Command::new(Operation::SetCursor, &article.encode(), None, Some(cursor)));
+                    }
                 }
                 self.drag_target = target;
                 (vec![], cmds)
@@ -176,6 +179,10 @@ impl Handler {
             Gesture::DragEnd => {
                 let mut cmds = vec![];
                 if let Some(idx) = self.drag_target {
+                    if self.drag_corner.is_some() {
+                        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
+                        cmds.push(Command::new(Operation::SetCursor, &article.encode(), None, Some("")));
+                    }
                     if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
                         let bx = &mut pos.1;
                         let drag_pointer = [Px::new(self.drag_pointer[0]), Px::new(self.drag_pointer[1])];
@@ -271,6 +278,18 @@ fn translate_card(n: u32, x: f64, y: f64) -> Command {
         Some(&(x as i64).to_string()),
         Some(&(y as i64).to_string()),
     )
+}
+
+/// resizeハンドル対象のcorner([x_side, y_side], Some(true)=base側/Some(false)=offset側, None=非該当)から
+/// CSSのresizeカーソル種別を求める。両軸Someの角ハンドルはx_side/y_sideが同じ側(左上・右下)ならnwse、
+/// 異なる側(右上・左下)ならnesw。片軸のみSomeの辺ハンドルはその軸方向(ew/ns)を返す。
+fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<&'static str> {
+    match corner? {
+        [Some(x_side), Some(y_side)] => Some(if x_side == y_side { "nwse-resize" } else { "nesw-resize" }),
+        [Some(_), None] => Some("ew-resize"),
+        [None, Some(_)] => Some("ns-resize"),
+        [None, None] => None,
+    }
 }
 
 /// イベントターゲットIDからarticle番号を抽出する
