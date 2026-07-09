@@ -5,7 +5,6 @@ extern crate std;
 pub mod js_client;
 pub mod event;
 pub mod app;
-pub mod ugrid;
 
 // ============================================================
 // Global Allocator
