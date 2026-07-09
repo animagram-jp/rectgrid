@@ -1,5 +1,7 @@
 # rectgrid
 
+[![Crates.io](https://img.shields.io/crates/v/rectgrid.svg)](https://crates.io/crates/rectgrid)
+
 Region operations on rectilinear grids with arbitrary unit systems.
 
 - A geometry module for operating on a two-point coordinate region (a box) and its collections (a region), defined over the grid of an arbitrary unit system — a rectilinear grid whose axes each have an independent increment function. Such a unit system is defined by an intrinsic origin and per-axis difference functions, both expressed in a base unit (unit: a general-purpose unit). It further provides, for any single box, a conversion function into a local unit system (parameter) in which each axis has unit vector length, making it possible to implement boundary tests against arbitrary geometry.
@@ -13,7 +15,7 @@ Region operations on rectilinear grids with arbitrary unit systems.
 
 | Version | Status    | Date       | Description |
 |---------|-----------|------------|-------------|
-| 0.1.0   | Scheduled | 2026-07-31 | 1st release |
+| 0.1.0   | Released  | 2026-07-10 | 1st release |
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 

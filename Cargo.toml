@@ -6,7 +6,8 @@ rust-version = "1.85"
 description = "Region operations on rectilinear grids with arbitrary unit systems."
 license = "Apache-2.0"
 repository = "https://github.com/animagram-jp/rectgrid"
-keywords = ["layout", "grid", "bbox", "geometory", "no-std"]
+readme = "README.md"
+keywords = ["layout", "grid", "bbox", "geometry", "no-std"]
 categories = ["graphics", "gui", "data-structures", "no-std"]
 exclude = ["examples/"]
 
