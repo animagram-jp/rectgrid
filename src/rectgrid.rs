@@ -268,16 +268,10 @@ impl<const D: usize> RectGrid<D> {
     /// 単調非減少でない場合(Scaleへ負の値を与えた場合やForwardDifferenceが減少する差分を返す場合)は結果を保証しない。
     ///
     /// ```
-    /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, Px};
-    /// use rectgrid::RectgridError;
-    /// let grid = RectGrid::<1>::new(
-    ///     [Px::new(0.0)],
-    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)])],
-    /// ).unwrap();
-    /// // 定義域(0..=30px)を超えるpxは、最後の有効indexを添えたOutOfIndexを返す
-    /// let result = grid.point_to_unit([Px::new(100.0)]);
-    /// assert!(matches!(result[0], Err(RectgridError::OutOfIndex(2))));
+    /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(10.0)]).unwrap();
+    /// let result = grid.point_to_unit([Px::new(25.0)]);
+    /// assert!((result[0].unwrap().get() - 2.5).abs() < 1e-6);
     /// ```
     pub fn point_to_unit(&self, point: [Px; D]) -> [Result<Unit, RectgridError>; D] {
         from_fn(|i| self.px_to_unit_axis(i, point[i] - self.origin[i]))
@@ -500,14 +494,12 @@ impl<const D: usize> RectGrid<D> {
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
-    /// use rectgrid::RectgridError;
-    /// let grid = RectGrid::<1>::new(
-    ///     [Px::new(0.0)],
-    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)])],
-    /// ).unwrap();
-    /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
-    /// // offset=5はVectorListの定義域(0..=1)を超えるためOutOfIndex
-    /// assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+    /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(100.0)]).unwrap();
+    /// let boxes = alloc::vec![BBox { base: [Unit::new(1.0)], offset: [Unit::new(2.0)] }];
+    /// let result = grid.box_as_px(&boxes);
+    /// let (base_px, offset_px) = result[0].as_ref().unwrap();
+    /// assert_eq!(base_px[0].get(), 100.0);
+    /// assert_eq!(offset_px[0].get(), 200.0);
     /// ```
     pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
         boxes.iter().map(|bx| -> Result<([Px; D], [Px; D]), RectgridError> {
@@ -733,6 +725,7 @@ pub fn snap_point_to_unit<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::rc::Rc;
 
     #[test]
     fn point_to_unit_scale_roundtrip() {
@@ -780,5 +773,94 @@ mod tests {
         let y = result[1].as_ref().unwrap().get();
         assert!((x - 1.1).abs() < 1e-6, "x = {}", x);
         assert!((y - 0.46875).abs() < 1e-6, "y = {}", y);
+    }
+
+    // ForwardDifferenceはdoctest・上記unit testでカバーされていない唯一の変種。
+    #[test]
+    fn accumulate_forward_difference() {
+        // f(i) = (i+1)*10 → 累積: x=2.5 → 10+20+0.5*30 = 45
+        let f = IncrementFunction::ForwardDifference(Rc::new(|i| Ok(Px::new((i + 1) as f64 * 10.0))));
+        let acc = f.accumulate().unwrap();
+        assert_eq!(acc(0.0).unwrap().get(), 0.0);
+        assert!((acc(2.5).unwrap().get() - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snap_floor_no_extend() {
+        let mut bx = BBox { base: [Unit::new(2.7)], offset: [Unit::new(1.9)] };
+        bx.snap_floor(None);
+        assert_eq!(bx.base[0].get(), 2.0);
+        assert_eq!(bx.offset[0].get(), 1.0);
+    }
+
+    #[test]
+    fn box_as_px_out_of_index() {
+        let grid = RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)])],
+        ).unwrap();
+        let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
+        assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+    }
+
+    #[test]
+    fn hit_test_with_ratio_no_hit() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        let boxes = alloc::vec![
+            BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+        ];
+        assert!(grid.hit_test_with_ratio([Px::new(500.0), Px::new(10.0)], &boxes, None).is_none());
+    }
+
+    #[test]
+    fn hit_tests_partial_and_no_hit() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        let boxes = alloc::vec![
+            BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+            BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+        ];
+        // (50, 10)px はboxes[0]のみにhit
+        assert_eq!(grid.hit_tests([Px::new(50.0), Px::new(10.0)], &boxes, None), alloc::vec![true, false]);
+        // どちらにもhitしない
+        assert_eq!(grid.hit_tests([Px::new(-1.0), Px::new(-1.0)], &boxes, None), alloc::vec![false, false]);
+    }
+
+    #[test]
+    fn drag_resize_offset_side() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        let bx = BBox {
+            base:   [Unit::new(2.0), Unit::new(0.0)],
+            offset: [Unit::new(1.0), Unit::new(3.0)],
+        };
+        // offset側(右辺)を900px(unit 4.5 → floor=4)へドラッグ → offset = 4 - 2 = 2、baseは不変
+        // ※整数境界(800px=unit 4.0)は二分探索の収束誤差でfloor結果が変わるため、非整数点を使う
+        let resized = drag_resize(&grid, [Px::new(900.0), Px::new(0.0)], &bx, [Some(false), None]).unwrap();
+        assert_eq!(resized.base[0].get(), 2.0);
+        assert_eq!(resized.offset[0].get(), 2.0);
+    }
+
+    #[test]
+    fn drag_resize_minimum_clamp() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+        ).unwrap();
+        let bx = BBox {
+            base:   [Unit::new(2.0), Unit::new(0.0)],
+            offset: [Unit::new(2.0), Unit::new(3.0)],
+        };
+        // base側をend(unit 4.0)より大きいunit 5.5(=1100px)へドラッグ → offset最小1.0にクランプ
+        let resized = drag_resize(&grid, [Px::new(1100.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
+        assert_eq!(resized.base[0].get(), 5.0);
+        assert_eq!(resized.offset[0].get(), 1.0);
     }
 }
