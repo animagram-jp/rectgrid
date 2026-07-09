@@ -1,23 +1,21 @@
-// This file includes untranslated text (ja).
-
 use core::{primitive::{u32, usize, f64}, result::Result, array::from_fn, marker::PhantomData, ops::{Add, AddAssign, Sub, Mul, Div}};
 use alloc::{vec::Vec, boxed::Box, rc::Rc};
 
 use crate::RectgridError;
-
-// 前提: RectGrid自体は各次元D間のPxの関係性を扱わないが、幾何実装の上では、D間で各Pxは等しく出力される。
 
 // When treating the rectgrid module of x and y as 2D coordinates,
 // x represents the axis that becomes the width in the viewport.
 // y represents the height direction in the viewport.
 // The origin (0,0) is assumed to be the top-left corner.
 
-// px座標系の仕様: モジュール外部から関数引数として渡されるpx(point/pointer)はglobal(origin未補正の外部座標、
-// 例えばviewport座標)として受け取り、各関数の内部でoriginを差し引いてlocal化する。
-// 一方、box(base/offset)由来のpx(unit_to_pxの戻り値や、それを使うhit_test系・as_px系の戻り値)は
-// 常にlocal(origin=0を基準とした座標)を返す。呼び出し側がRectGridを跨いで再度渡す場合はlocal pxとして扱う。
+// Px coordinate contract: px (point/pointer) passed in as a function argument from outside this
+// module is received as global (an external coordinate not yet corrected for origin, e.g. a
+// viewport coordinate), and each function subtracts origin internally to make it local.
+// Conversely, px derived from a box (base/offset) — the return value of unit_to_px, and anything
+// built on it such as hit_test/as_px results — is always local (origin=0 as the reference).
+// If a caller passes such a value back across a RectGrid boundary, treat it as local px.
 
-/// 単位系タグ付きのf64値。タグはゼロサイズで実行時表現には影響しない。
+/// f64 value tagged with a unit system. The tag is zero-sized and has no runtime representation.
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
 impl<Tag> Clone for Value<Tag> {
@@ -82,13 +80,13 @@ pub struct PxTag;
 pub struct UnitTag;
 pub struct ParameterTag;
 
-/// 原点から正方向へ無限に広がる、直交独立単位系。
+/// Orthogonal, axis-independent unit system extending infinitely in the positive direction from the origin.
 pub type Px = Value<PxTag>;
 
-/// 固有原点から正方向への序数を値として各軸で無限または有限に広がる、任意の直交単位系。
+/// Arbitrary orthogonal unit system, finite or infinite per axis, whose value is an ordinal from its own origin in the positive direction.
 pub type Unit = Value<UnitTag>;
 
-/// Bondary Boxの1つに対して、各辺長を1とし、符号をunit座標に従った、無界な局所座標の単位系。
+/// Unbounded local coordinate system for a single BBox, where each side length is 1 and sign follows the unit coordinate.
 pub type Parameter = Value<ParameterTag>;
 
 pub type Point<const D: usize>  = [Unit; D];
@@ -100,9 +98,8 @@ pub struct BBox<const D: usize> {
 }
 
 impl<const D: usize> BBox<D> {
-    /// base/offsetをfloorして整数格子にスナップする。
-    /// extendはbaseにのみ適用し、floor前に加算する。
-    /// (例: extend=-0.5 → 0.5以上食い込んでいれば繰り上げ、未満なら切り捨て)
+    /// Floors base/offset to snap them to an integer grid.
+    /// extend applies to base only, added before flooring.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
@@ -111,11 +108,8 @@ impl<const D: usize> BBox<D> {
     ///     offset: [Unit::new(1.9), Unit::new(3.0)],
     /// };
     /// bx.snap_floor(Some([Unit::new(-0.5), Unit::new(-0.5)]));
-    /// // base: 2.6 + (-0.5) = 2.1 → floor = 2.0
     /// assert_eq!(bx.base[0].get(), 2.0);
-    /// // base: 0.6 + (-0.5) = 0.1 → floor = 0.0
     /// assert_eq!(bx.base[1].get(), 0.0);
-    /// // offset: extendなし、そのままfloor
     /// assert_eq!(bx.offset[0].get(), 1.0);
     /// assert_eq!(bx.offset[1].get(), 3.0);
     /// ```
@@ -130,14 +124,13 @@ impl<const D: usize> BBox<D> {
         self
     }
 
-    /// offsetの全軸が非ゼロか(=幾何的な面積/体積を持つBBoxか)を返す。
-    /// いずれかの軸が0の場合、線分や点として面積を持たないとみなしfalseを返す。
+    /// Returns whether every axis of offset is nonzero (i.e., the BBox has geometric area/volume).
+    /// If any axis is 0, it is treated as a segment or point with no area, and false is returned.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
     /// let area = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(1.0), Unit::new(3.0)] };
     /// assert!(area.has_size());
-    /// // x軸のoffsetが0(線分) → 面積なし
     /// let segment = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(0.0), Unit::new(3.0)] };
     /// assert!(!segment.has_size());
     /// let point = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(0.0); 2] };
@@ -148,47 +141,44 @@ impl<const D: usize> BBox<D> {
     }
 }
 
-// todo: Option式は、幾何定義実装部
+// todo: Option-based expression, geometry definition implementation part
 // pub type Region<const D: usize> = (Vec<BBox<D>>, Option<Box<dyn Fn(u32) -> Result<Px, RectgridError>>>);
 
 pub enum IncrementFunction {
     /// Fn(i) = points[i+1] - points[i]
-    /// OutOfIndex means boundary; 引数は差分のindex(整数)
-    /// クロージャは範囲外の場合、範囲内に収まる最後の有効indexをOutOfIndexに詰めて返すこと。
-    /// todo: OutOfIndexの分散分布が許されるか検証
+    /// OutOfIndex means boundary; the argument is the difference's index (integer).
+    /// The closure must, when out of range, saturate to the last valid index within range and return it as OutOfIndex.
+    /// todo: verify whether a scattered distribution of OutOfIndex is acceptable
     ForwardDifference(Rc<dyn Fn(u32) -> Result<Px, RectgridError>>),
     /// boundary
-    /// 原点から正方向に間隔の与単位値を列挙した配列。
+    /// Array enumerating unit values of the interval from the origin in the positive direction.
     VectorList(Vec<Px>),
     /// unboundary
     Scale(f64),
 }
 
 impl IncrementFunction {
-    /// 式から評価クロージャを生成する。Unit座標(f64) -> px座標(originとの相対距離)。
-    /// 端数は線形補間でpxに変換する。
-    /// VectorListが空など、定義が評価不能な場合はInvalidDefinitionを返す。
+    /// Builds an evaluation closure from the definition: unit coordinate (f64) -> px coordinate (distance relative to origin).
+    /// Fractional parts are converted to px by linear interpolation.
+    /// Returns InvalidDefinition if the definition cannot be evaluated, e.g. an empty VectorList.
     ///
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{IncrementFunction, Px};
     ///
-    /// // Scale: 端数もそのまま線形倍
     /// let f = IncrementFunction::Scale(10.0).accumulate().unwrap();
     /// assert_eq!(f(2.5).unwrap().get(), 25.0);
     ///
-    /// // VectorList: 整数indexは列挙値そのもの、端数は隣接値との線形補間
     /// let f = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
     /// assert_eq!(f(1.0).unwrap().get(), 10.0);
     /// assert_eq!(f(1.5).unwrap().get(), 20.0);
     ///
-    /// // 空のVectorListは評価不能
     /// use rectgrid::RectgridError;
     /// assert!(matches!(IncrementFunction::VectorList(alloc::vec![]).accumulate(), Err(RectgridError::InvalidDefinition)));
     /// ```
     pub fn accumulate(&self) -> Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError> {
         match self {
-            // 差分を0..floor(x)で累積し、端数ぶんは次の差分を線形補間で加算。
+            // Accumulate differences over 0..floor(x); the fractional remainder is added via linear interpolation of the next difference.
             Self::ForwardDifference(f) => {
                 let f = f.clone();
                 Ok(Box::new(move |x| {
@@ -204,7 +194,7 @@ impl IncrementFunction {
                     Ok(acc)
                 }))
             }
-            // 累積座標の配列。整数indexで引き、端数は隣との線形補間。範囲外は境界。
+            // Array of accumulated coordinates. Indexed by integer; fractions are linearly interpolated with the neighbor. Out of range is a boundary.
             Self::VectorList(pxs) => {
                 if pxs.is_empty() {
                     return Err(RectgridError::InvalidDefinition);
@@ -248,7 +238,7 @@ impl<const D: usize> RectGrid<D> {
         Ok(Self { origin, accumulator })
     }
 
-    /// d軸の定義を差し替える。以降のunit_to_px/point_to_unit等はこの新しい定義で評価される。
+    /// Replaces the definition for axis d. Subsequent calls to unit_to_px/point_to_unit etc. evaluate against this new definition.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
@@ -262,10 +252,10 @@ impl<const D: usize> RectGrid<D> {
         Ok(())
     }
 
-    /// pxをunitへ数値的に逆変換する(accumulatorはUnit→Pxの一方向クロージャしか持たないため)。
-    /// pointはviewport等の外部px座標のまま渡してよい。originを差し引いたローカル座標に補正してから変換する。
-    /// 呼び出し側の契約: 各軸のaccumulatorはUnit>=0の範囲で単調非減少であること。
-    /// 単調非減少でない場合(Scaleへ負の値を与えた場合やForwardDifferenceが減少する差分を返す場合)は結果を保証しない。
+    /// Numerically inverts px to unit (the accumulator only holds a one-way Unit -> Px closure).
+    /// point may be passed as-is as an external px coordinate (e.g. viewport); it is corrected to a local coordinate by subtracting origin before conversion.
+    /// Caller contract: each axis's accumulator must be monotonically non-decreasing over Unit >= 0.
+    /// If it is not (e.g. a negative value given to Scale, or ForwardDifference returning a decreasing difference), the result is not guaranteed.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px};
@@ -290,7 +280,7 @@ impl<const D: usize> RectGrid<D> {
                     lo = hi;
                     hi *= 2.0;
                 }
-                // 定義域の終端に達した。targetがそこまでの範囲内で到達可能か確認する。
+                // Reached the end of the domain; check whether target is reachable within that range.
                 Err(RectgridError::OutOfIndex(last)) => {
                     hi = last as f64;
                     if f(hi)?.get() < target {
@@ -317,7 +307,7 @@ impl<const D: usize> RectGrid<D> {
         Ok(Unit::new((lo + hi) / 2.0))
     }
 
-    /// unit座標をpxへ変換する(accumulatorをそのまま評価する)。unitは原点からの絶対値であること。
+    /// Converts a unit coordinate to px (evaluates the accumulator directly). unit must be an absolute value from the origin.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
@@ -328,7 +318,7 @@ impl<const D: usize> RectGrid<D> {
         self.accumulator[d](unit.get())
     }
 
-    /// 複数のunit座標点をpxへ変換する。評価不能な軸がある点はErrを返す(点単位で判定を打ち切る、他の点には影響しない)。
+    /// Converts multiple unit coordinate points to px. Returns Err for a point with an unevaluable axis (evaluation stops per point; other points are unaffected).
     ///
     /// ```
     /// extern crate alloc;
@@ -341,7 +331,7 @@ impl<const D: usize> RectGrid<D> {
     /// let points = alloc::vec![[Unit::new(0.5)], [Unit::new(5.0)]];
     /// let px = grid.point_as_px(&points);
     /// assert_eq!(px[0].as_ref().unwrap()[0].get(), 5.0);
-    /// // 2点目はVectorListの定義域(0..=1)を超えるためOutOfIndex
+    /// // the 2nd point exceeds the VectorList's domain (0..=1), so it is OutOfIndex
     /// assert!(matches!(px[1], Err(RectgridError::OutOfIndex(1))));
     /// ```
     pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<Result<[Px; D], RectgridError>> {
@@ -354,12 +344,12 @@ impl<const D: usize> RectGrid<D> {
         }).collect()
     }
 
-    /// pointがboxes[i]に含まれるか(extend込み)を軸ごとに判定する。
-    /// pointはviewport座標のまま渡してよい(内部でoriginを差し引く)。
-    /// extendはunit座標のままbase/offsetに加算してからpx変換する
-    /// (accumulatorが非線形な場合、pxを個別に変換してから加算すると境界の位置によって幅がずれるため)。
-    /// 戻り値: (hitしたか, extend抜きのbase_px, extend抜きのoffset_px)。
-    /// base_px/offset_pxはhit後のparameter計算にそのまま使い回せるよう、判定ついでに返す。
+    /// Determines per axis whether point is contained in boxes[i] (extend included).
+    /// point may be passed as-is in viewport coordinates (origin is subtracted internally).
+    /// extend is added to base/offset in unit space before conversion to px
+    /// (if converted to px individually and added afterward, the width would drift depending on boundary position for a nonlinear accumulator).
+    /// Returns: (whether it hit, base_px without extend, offset_px without extend).
+    /// base_px/offset_px are returned alongside the hit test so they can be reused directly for parameter calculation.
     fn contains(&self, point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>) -> (bool, [Px; D], [Px; D]) {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         let base_px:   [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
@@ -375,8 +365,8 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
-    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(parameter)。
-    /// base_px/offset_pxはunit座標のbase/base+offsetをpx変換した値(containsの戻り値と同じ形)。
+    /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
+    /// base_px/offset_px are the px-converted values of the unit coordinates base/base+offset (same shape as contains' return value).
     fn parameter_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
         from_fn(|d| {
             let width = offset_px[d] - base_px[d];
@@ -384,8 +374,8 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// pointにhitするboxesのうち、indexが最大のものを返す(boxesはindexが大きいほど優先度が高いとみなす)。
-    /// 複数hitする場合はindexの大きい方を優先するため、末尾から走査する。
+    /// Returns the highest index among the boxes that point hits (a higher index in boxes is treated as higher priority).
+    /// When multiple boxes hit, the higher index wins, so the scan runs from the tail.
     ///
     /// ```
     /// extern crate alloc;
@@ -398,9 +388,7 @@ impl<const D: usize> RectGrid<D> {
     ///     BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
     ///     BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
     /// ];
-    /// // (450, 10)pxはboxes[1](x: 400..600px)の内側
     /// assert_eq!(grid.hit_test([Px::new(450.0), Px::new(10.0)], &boxes, None), Some(1));
-    /// // どのboxにもhitしない座標
     /// assert_eq!(grid.hit_test([Px::new(-100.0), Px::new(-100.0)], &boxes, None), None);
     /// ```
     pub fn hit_test(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<usize> {
@@ -410,8 +398,8 @@ impl<const D: usize> RectGrid<D> {
             .find_map(|(i, bx)| self.contains(point, bx, extend).0.then_some(i))
     }
 
-    /// hit_testと同様にindex最大のhitを返しつつ、hitしたboxに対するget_parameter相当の値も併せて返す。
-    /// parameterはextendの影響を受けない、box内側基準の比率(base側=0.0, offset側=1.0)。
+    /// Like hit_test, returns the highest-index hit, and additionally the get_parameter-equivalent value for the hit box.
+    /// parameter is unaffected by extend; it is a ratio relative to the box interior (base side = 0.0, offset side = 1.0).
     ///
     /// ```
     /// extern crate alloc;
@@ -421,7 +409,6 @@ impl<const D: usize> RectGrid<D> {
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
     /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] }];
-    /// // box中央(100, 32)pxはparameter(0.5, 0.5)
     /// let (i, parameter) = grid.hit_test_with_parameter([Px::new(100.0), Px::new(32.0)], &boxes, None).unwrap();
     /// assert_eq!(i, 0);
     /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
@@ -438,7 +425,7 @@ impl<const D: usize> RectGrid<D> {
             })
     }
 
-    /// pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す。
+    /// Scans all boxes point hits, returning hit/no-hit for each, in a Vec the same length as boxes.
     ///
     /// ```
     /// extern crate alloc;
@@ -447,12 +434,10 @@ impl<const D: usize> RectGrid<D> {
     ///     [Px::new(0.0), Px::new(0.0)],
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
-    /// // 2軸とも重なるboxes[0](x: 0..200px, y: 0..64px)とboxes[1](x: 100..300px, y: 0..64px)
     /// let boxes = alloc::vec![
     ///     BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
     ///     BBox { base: [Unit::new(0.5), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
     /// ];
-    /// // (150, 10)pxは両方のboxにhitする
     /// assert_eq!(grid.hit_tests([Px::new(150.0), Px::new(10.0)], &boxes, None), alloc::vec![true, true]);
     /// ```
     pub fn hit_tests(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Vec<bool> {
@@ -462,8 +447,8 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
-    /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(parameter)。
-    /// pointはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
+    /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
+    /// point may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
@@ -472,11 +457,10 @@ impl<const D: usize> RectGrid<D> {
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
     /// let bx = BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] };
-    /// // boxはx: 200..400px, y: 0..64px。(300, 16)pxは各軸の1/4地点
     /// let parameter = grid.get_parameter([Px::new(300.0), Px::new(16.0)], bx);
     /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
     /// assert!((parameter[1].get() - 0.25).abs() < 1e-9);
-    /// // box範囲外(base側)はparameterが負になる
+    /// // outside the box (base side), parameter goes negative
     /// let parameter = grid.get_parameter([Px::new(100.0), Px::new(0.0)], bx);
     /// assert!((parameter[0].get() - (-0.5)).abs() < 1e-9);
     /// ```
@@ -487,9 +471,9 @@ impl<const D: usize> RectGrid<D> {
         Self::parameter_from_px(local, base_px, offset_px)
     }
 
-    /// 複数のBBoxを(base_px, offset_px)へ変換する。offset_pxはbase位置を踏まえた実際の辺の長さ
-    /// (unit_to_px(base+offset) - unit_to_px(base))であり、非線形なaccumulator(ForwardDifference/VectorList)でも
-    /// base位置に応じた正しい長さになる。評価不能な軸があるboxはErrを返す(box単位で判定を打ち切る、他のboxには影響しない)。
+    /// Converts multiple BBox to (base_px, offset_px). offset_px is the actual side length accounting for base position
+    /// (unit_to_px(base+offset) - unit_to_px(base)), which stays correct for base position even under a nonlinear
+    /// accumulator (ForwardDifference/VectorList). Returns Err for a box with an unevaluable axis (evaluation stops per box; other boxes are unaffected).
     ///
     /// ```
     /// extern crate alloc;
@@ -513,10 +497,10 @@ impl<const D: usize> RectGrid<D> {
         }).collect()
     }
 
-    /// pointerのlocal座標(origin補正後)からzを差し引いた値を返す。
-    /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
-    /// drag開始時はzにbase_px(要素基準位置)を渡すとドラッグオフセットが、
-    /// drag中はzにそのオフセットを渡すと現在の要素基準位置が求まる。
+    /// Returns pointer's local coordinate (after origin correction) with z subtracted.
+    /// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
+    /// At drag start, passing base_px (the element's reference position) as z yields the drag offset;
+    /// during drag, passing that offset as z yields the element's current reference position.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px};
@@ -524,7 +508,6 @@ impl<const D: usize> RectGrid<D> {
     ///     [Px::new(10.0), Px::new(20.0)],
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
-    /// // origin(10, 20)を補正した(220, 30)pxを掴んだ位置から、要素基準px(200, 0)を引くとドラッグオフセット
     /// let drag_offset = grid.offset([Px::new(230.0), Px::new(50.0)], [Px::new(200.0), Px::new(0.0)]);
     /// assert_eq!((drag_offset[0].get(), drag_offset[1].get()), (20.0, 30.0));
     /// ```
@@ -536,20 +519,21 @@ impl<const D: usize> RectGrid<D> {
 // ============================================================
 // pointer / drag interaction (stateless helpers)
 //
-// RectGrid<D>とBBox<D>のみに依存する、状態を持たない純粋関数群。
-// いずれも&RectGridのみ要求する(RectGridのaccumulatorはnew()時点で構築済みで、
-// 呼び出しごとに内部状態を変更する必要がないため)。
-// BBoxはbase/offsetが常にUnitで、Px/Unitが混在する中間状態を表現できないため、
-// drag中のpx位置はBBoxを更新せず戻り値としてのみ返す。呼び出し側がdrag中はpxを保持し、
-// DragEnd相当のタイミングでsnap_*関数に通してBBox(Unit)へ確定させる。
+// Stateless pure functions depending only on RectGrid<D> and BBox<D>.
+// All of them require only &RectGrid (RectGrid's accumulator is already built at new() time, so no
+// internal state needs to change per call).
+// Because BBox always keeps base/offset in Unit and cannot represent a mixed Px/Unit intermediate
+// state, the px position during drag is never written back into BBox — it is only returned as a
+// value. The caller holds onto px during the drag and finalizes it into BBox (Unit) via a snap_*
+// function at the DragEnd-equivalent moment.
 // ============================================================
 
-/// 面積を持つBBoxに対し、pointが辺付近(閾値threshold未満)にあるかを軸ごとに判定する。
-/// 戻り値は(各軸のparameter(取得できた場合), 角判定結果)のペア。
-/// 角判定結果の各要素: Some(true)=base側の辺付近([0, threshold]), Some(false)=offset側の辺付近([1-threshold, 1]), None=非該当。
-/// 少なくとも1軸がSomeであればハンドル判定として扱う(全軸Some=角、1軸のみSome=辺)。
-/// 全軸Noneの場合はハンドル対象外としてNoneを返す(呼び出し側は移動ドラッグ等にフォールバックする)。
-/// parameterがNoneになるのは、has_sizeでないか、pointがbx範囲外の場合。
+/// For a BBox with area, determines per axis whether point is near an edge (within threshold).
+/// Returns a pair of (each axis's parameter, if obtainable) and the corner test result.
+/// Each element of the corner result: Some(true) = near the base-side edge ([0, threshold]), Some(false) = near the offset-side edge ([1-threshold, 1]), None = not applicable.
+/// If at least one axis is Some, it is treated as a handle hit (all axes Some = corner, only one axis Some = edge).
+/// If all axes are None, returns None to signal no handle (the caller should fall back to e.g. a move drag).
+/// parameter is None when the box lacks size (has_size is false) or point is outside bx.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
@@ -558,17 +542,17 @@ impl<const D: usize> RectGrid<D> {
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
 /// let bx = BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] };
-/// // bx左上隅(400, 0)px付近をクリック → base側同士の角
+/// // clicking near bx's top-left corner (400, 0)px -> corner on the base side for both axes
 /// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1);
 /// assert_eq!(corner, Some([Some(true), Some(true)]));
-/// // bx上辺中央付近(x中央、y=base側)をクリック → y軸のみのhandle(辺ドラッグ)
+/// // clicking near the middle of bx's top edge (x center, y = base side) -> a y-only handle (edge drag)
 /// let (_, corner) = corner_test(&grid, [Px::new(500.0), Px::new(0.0)], &bx, 0.1);
 /// assert_eq!(corner, Some([None, Some(true)]));
-/// // bx中央付近は辺にも角にも該当しないが、parameter自体は取得できる
+/// // near the center of bx matches neither edge nor corner, but parameter is still obtainable
 /// let (parameter, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1);
 /// assert!(parameter.is_some());
 /// assert_eq!(corner, None);
-/// // bx範囲外はparameterも取得できない
+/// // outside bx, parameter is also unobtainable
 /// let (parameter, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1);
 /// assert!(parameter.is_none());
 /// assert_eq!(corner, None);
@@ -593,9 +577,9 @@ pub fn corner_test<const D: usize>(
     (Some(parameter), corner)
 }
 
-/// Drag中、角ハンドルドラッグによってBBoxのbase/offsetを更新し、更新後のBBoxを返す。
-/// corner[d] = Some(base_side): base_side==trueならbase側の辺を、falseならoffset側の辺を動かす。
-/// 新しいoffsetは最小1.0unitを保証する(base/offsetが交差しないように)。
+/// During drag, updates BBox's base/offset via a corner-handle drag and returns the updated BBox.
+/// corner[d] = Some(base_side): if base_side == true, moves the base-side edge; if false, the offset-side edge.
+/// The new offset is guaranteed to be at least 1.0 unit (so base/offset never cross).
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, drag_resize};
@@ -604,11 +588,11 @@ pub fn corner_test<const D: usize>(
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
 /// let bx = BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] };
-/// // 左上(base側)の角を(150, 0)pxへドラッグ → x軸のbaseが0unitへ縮む
+/// // dragging the top-left (base-side) corner to (150, 0)px -> the x axis's base shrinks to 0 unit
 /// let resized = drag_resize(&grid, [Px::new(150.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
 /// assert_eq!(resized.base[0].get(), 0.0);
 /// assert_eq!(resized.offset[0].get(), 3.0); // base 2.0 + offset 1.0 - new_base 0.0
-/// assert_eq!(resized.offset[1].get(), 3.0); // y軸は未変更
+/// assert_eq!(resized.offset[1].get(), 3.0); // y axis unchanged
 /// ```
 pub fn drag_resize<const D: usize>(
     grid:    &RectGrid<D>,
@@ -635,10 +619,10 @@ pub fn drag_resize<const D: usize>(
     Ok(resized)
 }
 
-/// Drag中、移動ドラッグ(角ハンドルでない)によってbaseのpx位置を求める。
-/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
-/// BBoxはbaseが常にUnitのため、drag中のpx位置はBBoxを更新せずここで返すのみに留め、
-/// DragEnd相当のタイミングでsnap_region_to_unitに通してBBoxへ反映する。
+/// During drag, computes base's px position for a move drag (as opposed to a corner-handle drag).
+/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
+/// Because BBox always keeps base in Unit, the px position during drag is only returned here without
+/// updating BBox; it is committed to BBox via snap_region_to_unit at the DragEnd-equivalent moment.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, drag_translate};
@@ -646,7 +630,6 @@ pub fn drag_resize<const D: usize>(
 ///     [Px::new(10.0), Px::new(20.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
-/// // pointerをviewport座標(230, 50)、drag_offsetを(20, 30)として移動
 /// let px = drag_translate(&grid, [Px::new(230.0), Px::new(50.0)], [Px::new(20.0), Px::new(30.0)]);
 /// assert_eq!((px[0].get(), px[1].get()), (200.0, 0.0));
 /// ```
@@ -658,9 +641,9 @@ pub fn drag_translate<const D: usize>(
     grid.offset(pointer, drag_offset)
 }
 
-/// DragEnd時、面積を持つBBoxの移動ドラッグ結果をUnit格子にスナップし、更新後のBBox(base)を返す。
-/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
-/// extendはunit変換値にfloor前に加算する。
+/// At DragEnd, snaps the move-drag result of a BBox with area to the Unit grid and returns the updated BBox (base).
+/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally. drag_offset must be the same value passed to drag_translate.
+/// extend is added to the unit-converted value before flooring.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, snap_region_to_unit};
@@ -669,14 +652,13 @@ pub fn drag_translate<const D: usize>(
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
 /// let bx = BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] };
-/// // pointer(430, 70)px、drag_offset(0, 0) → local(430, 70)px = (2.15, 1.09375)unit。extend +0.25してfloor。
 /// let snapped = snap_region_to_unit(
 ///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], &bx,
 ///     Some([Unit::new(0.25), Unit::new(0.25)]),
 /// ).unwrap();
 /// assert_eq!(snapped.base[0].get(), 2.0);
 /// assert_eq!(snapped.base[1].get(), 1.0);
-/// assert_eq!(snapped.offset[0].get(), 1.0); // offsetはfloor済みでそのまま
+/// assert_eq!(snapped.offset[0].get(), 1.0); // offset is already floored, so it stays as-is
 /// ```
 pub fn snap_region_to_unit<const D: usize>(
     grid:        &RectGrid<D>,
@@ -694,8 +676,8 @@ pub fn snap_region_to_unit<const D: usize>(
     Ok(snapped)
 }
 
-/// DragEnd時、点BBox(面積なし)の移動ドラッグ結果をUnit格子にスナップしたBBoxを求める。
-/// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
+/// At DragEnd, computes a BBox snapped to the Unit grid from the move-drag result of a point BBox (no area).
+/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally. drag_offset must be the same value passed to drag_translate.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit, snap_point_to_unit};
@@ -703,7 +685,6 @@ pub fn snap_region_to_unit<const D: usize>(
 ///     [Px::new(0.0), Px::new(0.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
-/// // pointer(430, 70)px、drag_offset(0, 0) → (2.15, 1.09375)unit。snap +0.25してfloor。
 /// let snapped = snap_point_to_unit(
 ///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], [Unit::new(0.25), Unit::new(0.25)],
 /// ).unwrap();
@@ -771,7 +752,6 @@ mod tests {
             [Px::new(10.0), Px::new(20.0)],
             [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
         ).unwrap();
-        // viewport座標(230, 50)は、origin(10, 20)を差し引くとローカル座標(220, 30)
         let result = grid.point_to_unit([Px::new(230.0), Px::new(50.0)]);
         let x = result[0].as_ref().unwrap().get();
         let y = result[1].as_ref().unwrap().get();
@@ -779,10 +759,10 @@ mod tests {
         assert!((y - 0.46875).abs() < 1e-6, "y = {}", y);
     }
 
-    // ForwardDifferenceはdoctest・上記unit testでカバーされていない唯一の変種。
+    // ForwardDifference is the only variant not covered by the doctests or the unit tests above.
     #[test]
     fn accumulate_forward_difference() {
-        // f(i) = (i+1)*10 → 累積: x=2.5 → 10+20+0.5*30 = 45
+        // f(i) = (i+1)*10 -> accumulated at x=2.5: 10+20+0.5*30 = 45
         let f = IncrementFunction::ForwardDifference(Rc::new(|i| Ok(Px::new((i + 1) as f64 * 10.0))));
         let acc = f.accumulate().unwrap();
         assert_eq!(acc(0.0).unwrap().get(), 0.0);
@@ -829,9 +809,7 @@ mod tests {
             BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
             BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
         ];
-        // (50, 10)px はboxes[0]のみにhit
         assert_eq!(grid.hit_tests([Px::new(50.0), Px::new(10.0)], &boxes, None), alloc::vec![true, false]);
-        // どちらにもhitしない
         assert_eq!(grid.hit_tests([Px::new(-1.0), Px::new(-1.0)], &boxes, None), alloc::vec![false, false]);
     }
 
@@ -845,8 +823,8 @@ mod tests {
             base:   [Unit::new(2.0), Unit::new(0.0)],
             offset: [Unit::new(1.0), Unit::new(3.0)],
         };
-        // offset側(右辺)を900px(unit 4.5 → floor=4)へドラッグ → offset = 4 - 2 = 2、baseは不変
-        // ※整数境界(800px=unit 4.0)は二分探索の収束誤差でfloor結果が変わるため、非整数点を使う
+        // Drag the offset-side (right) edge to 900px (unit 4.5 -> floor=4): offset = 4 - 2 = 2, base unchanged.
+        // Use a non-integer point: at an integer boundary (800px = unit 4.0), binary-search convergence error can shift the floored result.
         let resized = drag_resize(&grid, [Px::new(900.0), Px::new(0.0)], &bx, [Some(false), None]).unwrap();
         assert_eq!(resized.base[0].get(), 2.0);
         assert_eq!(resized.offset[0].get(), 2.0);
@@ -862,7 +840,7 @@ mod tests {
             base:   [Unit::new(2.0), Unit::new(0.0)],
             offset: [Unit::new(2.0), Unit::new(3.0)],
         };
-        // base側をend(unit 4.0)より大きいunit 5.5(=1100px)へドラッグ → offset最小1.0にクランプ
+        // Drag the base side past end (unit 4.0) to unit 5.5 (=1100px): offset clamps to a minimum of 1.0.
         let resized = drag_resize(&grid, [Px::new(1100.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
         assert_eq!(resized.base[0].get(), 5.0);
         assert_eq!(resized.offset[0].get(), 1.0);
