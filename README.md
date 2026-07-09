@@ -44,27 +44,27 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `Unit` | - | - | - | `Value<UnitTag>` |
 | `Parameter` | - | - | - | `Value<ParameterTag>` |
 | `Point<D>` | - | - | - | `[Unit; D]` |
-| `BBox<D>` | `base` | - | `Point<D>` | フィールド |
-|           | `offset` | - | `Point<D>` | フィールド |
+| `BBox<D>` | `base` | - | `Point<D>` | 始点 |
+|           | `offset` | - | `Point<D>` | 終点までのベクトル距離 |
 |           | `snap_floor` | `extend: Option<[Unit; D]>` | `&mut Self` | base/offsetをfloor整数格子にスナップ。extendはbaseにのみfloor前に加算 |
 |           | `has_size` | - | `bool` | 全軸のoffsetが非ゼロか(面積/体積を持つBBoxか) |
 | `RectgridError` | `OutOfIndex` | `u32` | - | 範囲外アクセス。範囲内に収まる最後の有効index |
 |                 | `InvalidDefinition` | - | - | 定義が不正で評価クロージャを構築できない |
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
-|                     | `VectorList` | `Vec<Px>` | - | - |
+|                     | `VectorList` | `Vec<Px>` | - | Vec<>(空集合)は不正 |
 |                     | `Scale` | `f64` | - | - |
 |                     | `accumulate` | - | `Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError>` | - |
-| `RectGrid<D>` | `origin` | - | `[Px; D]` | フィールド |
+| `RectGrid<D>` | `origin` | - | `[Px; D]` | 始点 |
 |               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | d軸の定義を差し替える |
 |               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ数値的に逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
-|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<Result<[Px; D], RectgridError>>` | 複数のunit座標点をpxへ変換。評価不能な軸がある点はErr |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | 複数のBBoxを(base_px, offset_px)へ変換。評価不能な軸があるboxはErr |
+|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<Result<[Px; D], RectgridError>>` | 複数のunit座標点をpxへ変換。評価不能な軸がある点はError |
+|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | 複数のBBoxを(base_px, offset_px)へ変換。評価不能な軸があるboxはError |
 |               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す |
-|               | `hit_test_with_ratio` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_ratio相当の値を返す |
+|               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
 |               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す |
-|               | `get_ratio`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標 |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標 |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
 
 | Free function | Parameter | Return | Description |

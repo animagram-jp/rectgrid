@@ -40,7 +40,8 @@
     box-shadow: var(--elevation-5);
 }
 
-#section_article-3 {
+#section_article-3,
+#section_article-4 {
     width: 0;
     height: 0;
     min-width: 0;
