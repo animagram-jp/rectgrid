@@ -334,46 +334,29 @@ impl<const D: usize> RectGrid<D> {
         self.accumulator[d](unit.get())
     }
 
-    /// 複数のunit座標点をpxへ変換する。評価不能な軸は0.0pxとして扱う(呼び出し側は描画の続行を優先する用途)。
+    /// 複数のunit座標点をpxへ変換する。評価不能な軸がある点はErrを返す(点単位で判定を打ち切る、他の点には影響しない)。
     ///
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
-    /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(200.0)]).unwrap();
-    /// let points = alloc::vec![[Unit::new(1.0)], [Unit::new(2.0)]];
-    /// let px = grid.point_as_px(&points);
-    /// assert_eq!(px[0][0].get(), 200.0);
-    /// assert_eq!(px[1][0].get(), 400.0);
-    /// ```
-    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Px; D]> {
-        points.iter().map(|pt| {
-            from_fn(|d| self.unit_to_px(d, &pt[d]).unwrap_or(Px::new(0.0)))
-        }).collect()
-    }
-
-    /// 複数のBBoxを(base_px, offset_px)へ変換する。offset_pxはbase位置を踏まえた実際の辺の長さ
-    /// (unit_to_px(base+offset) - unit_to_px(base))であり、非線形なaccumulator(ForwardDifference/VectorList)でも
-    /// base位置に応じた正しい長さになる。評価不能な軸は0.0pxとして扱う。
-    ///
-    /// ```
-    /// extern crate alloc;
-    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
-    /// // VectorListは非線形: [0, 10, 30, 60]px。base=1でoffset=2ならば、10..60pxで幅50px。
+    /// use rectgrid::RectgridError;
     /// let grid = RectGrid::<1>::new(
     ///     [Px::new(0.0)],
-    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0), Px::new(60.0)])],
+    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)])],
     /// ).unwrap();
-    /// let boxes = alloc::vec![BBox { base: [Unit::new(1.0)], offset: [Unit::new(2.0)] }];
-    /// let result = grid.box_as_px(&boxes);
-    /// assert_eq!(result[0].0[0].get(), 10.0);
-    /// assert_eq!(result[0].1[0].get(), 50.0);
+    /// let points = alloc::vec![[Unit::new(0.5)], [Unit::new(5.0)]];
+    /// let px = grid.point_as_px(&points);
+    /// assert_eq!(px[0].as_ref().unwrap()[0].get(), 5.0);
+    /// // 2点目はVectorListの定義域(0..=1)を超えるためOutOfIndex
+    /// assert!(matches!(px[1], Err(RectgridError::OutOfIndex(1))));
     /// ```
-    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([Px; D], [Px; D])> {
-        boxes.iter().map(|bx| {
-            let base_px:   [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
-            let end_px:    [Px; D] = from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(0.0)));
-            let offset_px: [Px; D] = from_fn(|d| end_px[d] - base_px[d]);
-            (base_px, offset_px)
+    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<Result<[Px; D], RectgridError>> {
+        points.iter().map(|pt| -> Result<[Px; D], RectgridError> {
+            let mut px = [Px::new(0.0); D];
+            for d in 0..D {
+                px[d] = self.unit_to_px(d, &pt[d])?;
+            }
+            Ok(px)
         }).collect()
     }
 
@@ -510,8 +493,9 @@ impl<const D: usize> RectGrid<D> {
         Self::ratio_from_px(local, base_px, offset_px)
     }
 
-    /// 複数のBBoxを(base_px, offset_px)へ変換する。box_as_pxと同じ計算だが、
-    /// 評価不能な軸があるboxはErrを返す(box_as_pxのように0.0pxで代替しない、厳密なvariant)。
+    /// 複数のBBoxを(base_px, offset_px)へ変換する。offset_pxはbase位置を踏まえた実際の辺の長さ
+    /// (unit_to_px(base+offset) - unit_to_px(base))であり、非線形なaccumulator(ForwardDifference/VectorList)でも
+    /// base位置に応じた正しい長さになる。評価不能な軸があるboxはErrを返す(box単位で判定を打ち切る、他のboxには影響しない)。
     ///
     /// ```
     /// extern crate alloc;
@@ -523,9 +507,9 @@ impl<const D: usize> RectGrid<D> {
     /// ).unwrap();
     /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
     /// // offset=5はVectorListの定義域(0..=1)を超えるためOutOfIndex
-    /// assert!(matches!(grid.as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+    /// assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
     /// ```
-    pub fn as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
+    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
         boxes.iter().map(|bx| -> Result<([Px; D], [Px; D]), RectgridError> {
             let mut base_px   = [Px::new(0.0); D];
             let mut offset_px = [Px::new(0.0); D];
