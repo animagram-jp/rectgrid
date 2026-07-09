@@ -46,20 +46,34 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `Point<D>` | - | - | - | `[Unit; D]` |
 | `BBox<D>` | `base` | - | `Point<D>` | フィールド |
 |           | `offset` | - | `Point<D>` | フィールド |
+|           | `snap_floor` | `extend: Option<[Unit; D]>` | `&mut Self` | base/offsetをfloor整数格子にスナップ。extendはbaseにのみfloor前に加算 |
+|           | `has_size` | - | `bool` | 全軸のoffsetが非ゼロか(面積/体積を持つBBoxか) |
 | `RectgridError` | `OutOfIndex` | `u32` | - | 範囲外アクセス。範囲内に収まる最後の有効index |
 |                 | `InvalidDefinition` | - | - | 定義が不正で評価クロージャを構築できない |
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
 |                     | `VectorList` | `Vec<Px>` | - | - |
 |                     | `Scale` | `f64` | - | - |
 |                     | `accumulate` | - | `Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError>` | - |
-| `RectGrid` | `origin` | - | `[Px; D]` | フィールド |
-|            | `new`            | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
-|            | `set_definition` | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | - |
-|            | `point_to_unit`  | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ数値的に逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
-|            | `point_as_px`    | `points: &Vec<Point<D>>` | `Vec<[Px; D]>` | - |
-|            | `box_as_px`      | `boxes: &Vec<BBox<D>>` | `Vec<([Px; D], [Px; D])>` | - |
-|            | `get_ratio`      | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標 |
-|            | `as_px`          | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | - |
+| `RectGrid<D>` | `origin` | - | `[Px; D]` | フィールド |
+|               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
+|               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | d軸の定義を差し替える |
+|               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ数値的に逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
+|               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
+|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<Result<[Px; D], RectgridError>>` | 複数のunit座標点をpxへ変換。評価不能な軸がある点はErr |
+|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | 複数のBBoxを(base_px, offset_px)へ変換。評価不能な軸があるboxはErr |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す |
+|               | `hit_test_with_ratio` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_ratio相当の値を返す |
+|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す |
+|               | `get_ratio`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標 |
+|               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
+
+| Free function | Parameter | Return | Description |
+|-|-|-|-|
+| `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
+| `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | 角ハンドルドラッグによってBBoxのbase/offsetを更新する |
+| `drag_translate<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | 移動ドラッグ中のbaseのpx位置を求める |
+| `snap_region_to_unit<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持つBBoxの移動ドラッグ結果をUnit格子にスナップする |
+| `snap_point_to_unit<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D], snap: [Unit; D]` | `Result<BBox<D>, RectgridError>` | DragEnd時、点BBoxの移動ドラッグ結果をUnit格子にスナップしたBBoxを求める |
 
 ---
 
