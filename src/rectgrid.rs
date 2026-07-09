@@ -3,18 +3,6 @@ use alloc::{vec::Vec, boxed::Box, rc::Rc};
 
 use crate::RectgridError;
 
-// When treating the rectgrid module of x and y as 2D coordinates,
-// x represents the axis that becomes the width in the viewport.
-// y represents the height direction in the viewport.
-// The origin (0,0) is assumed to be the top-left corner.
-
-// Px coordinate contract: px (point/pointer) passed in as a function argument from outside this
-// module is received as global (an external coordinate not yet corrected for origin, e.g. a
-// viewport coordinate), and each function subtracts origin internally to make it local.
-// Conversely, px derived from a box (base/offset) — the return value of unit_to_px, and anything
-// built on it such as hit_test/as_px results — is always local (origin=0 as the reference).
-// If a caller passes such a value back across a RectGrid boundary, treat it as local px.
-
 /// f64 value tagged with a unit system. The tag is zero-sized and has no runtime representation.
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
