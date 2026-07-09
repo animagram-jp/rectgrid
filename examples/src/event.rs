@@ -32,11 +32,10 @@ const SECTION_PADDING_PX: f64 = 0.0;  // viewport左端から#section内側ま�
 // ============================================================
 
 pub struct Handler {
-    articles:         Vec<(u32, BBox<2>)>,    // (article番号, BBox)。末尾が最前面・hit優先
-    drag_target:      Option<u32>,             // article番号
+    articles:         Vec<(u32, BBox<2>)>,      // (article番号, BBox)。末尾が最前面・hit優先
+    drag_target:      Option<u32>,               // article番号
     drag_corner:      Option<[Option<bool>; 2]>, // article-3角ドラッグ: Some(true)=base側, Some(false)=offset側, None=軸ロック
-    is_dragging:      bool,                    // Dragジェスチャが1回以上発火した
-    drag_pointer:     [f64; 2],               // Drag中の最終raw viewport座標(DragEndのsnap_*呼び出し用)
+    drag_pointer:     [f64; 2],                  // Drag中の最終raw viewport座標(DragEndのsnap_*呼び出し用)
     rectgrid:         RectGrid<2>,
     section_width_px: f64,
 }
@@ -50,11 +49,10 @@ impl Handler {
             articles:     alloc::vec![
                               (1, BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
                               (2, BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
-                              (3, BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] }),
+                              (3, BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(2.0), Unit::new(3.0)] }),
                           ],
             drag_target:  None,
             drag_corner:  None,
-            is_dragging:  false,
             drag_pointer: [0.0; 2],
             rectgrid:     RectGrid::new(
                               [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])],
@@ -126,7 +124,6 @@ impl Handler {
                     cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&top_z.to_string())));
                 }
                 self.drag_target = target;
-                self.is_dragging = false;
                 (vec![], cmds)
             }
             EventType::KeyDown  => todo!("keydown"),
@@ -144,7 +141,6 @@ impl Handler {
                 let pointer = [Px::new(*x), Px::new(*y)];
                 self.drag_pointer = [*x, *y];
                 let Some(idx) = self.drag_target else { return (vec![], vec![]); };
-                self.is_dragging = true;
                 let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) else {
                     return (vec![], vec![]);
                 };
@@ -180,44 +176,41 @@ impl Handler {
             Gesture::DragEnd => {
                 let mut cmds = vec![];
                 if let Some(idx) = self.drag_target {
-                    if self.is_dragging {
-                        if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
-                            let bx = &mut pos.1;
-                            let drag_pointer = [Px::new(self.drag_pointer[0]), Px::new(self.drag_pointer[1])];
-                            let drag_offset  = [Px::new(pointer_state.drag_offset.0), Px::new(pointer_state.drag_offset.1)];
-                            if bx.has_size() {
-                                if self.drag_corner.is_none() {
-                                    // 移動ドラッグ: base を Unit格子にスナップ
-                                    if let Ok(new_bx) = snap_region_to_unit(&self.rectgrid, drag_pointer, drag_offset, bx, Some([Unit::new(0.25), Unit::new(0.25)])) {
-                                        *bx = new_bx;
-                                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
-                                        cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
-                                    }
-                                }
-                                // 角ハンドルはDrag中に既にUnit確定済み
-                            } else {
-                                // 点BBox: drag_pointerからUnit格子にスナップ
-                                if let Ok(new_bx) = snap_point_to_unit(&self.rectgrid, drag_pointer, drag_offset, [Unit::new(0.25), Unit::new(0.25)]) {
+                    if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
+                        let bx = &mut pos.1;
+                        let drag_pointer = [Px::new(self.drag_pointer[0]), Px::new(self.drag_pointer[1])];
+                        let drag_offset  = [Px::new(pointer_state.drag_offset.0), Px::new(pointer_state.drag_offset.1)];
+                        if bx.has_size() {
+                            if self.drag_corner.is_none() {
+                                // 移動ドラッグ: base を Unit格子にスナップ
+                                if let Ok(new_bx) = snap_region_to_unit(&self.rectgrid, drag_pointer, drag_offset, bx, Some([Unit::new(0.25), Unit::new(0.25)])) {
                                     *bx = new_bx;
                                     let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
                                     cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
                                 }
                             }
+                            // 角ハンドルはDrag中に既にUnit確定済み
+                        } else {
+                            // 点BBox: drag_pointerからUnit格子にスナップ
+                            if let Ok(new_bx) = snap_point_to_unit(&self.rectgrid, drag_pointer, drag_offset, [Unit::new(0.25), Unit::new(0.25)]) {
+                                *bx = new_bx;
+                                let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
+                                cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
+                            }
                         }
-                        // 動かしたarticleを末尾(最前面)へ移動し、全articleのz-indexを再割り当て
-                        if let Some(pos) = self.articles.iter().position(|(n, _)| *n == idx) {
-                            let entry = self.articles.remove(pos);
-                            self.articles.push(entry);
-                        }
-                        for (z, (n, _)) in self.articles.iter().enumerate() {
+                    }
+                    // 動かしたarticleを末尾(最前面)へ移動し、変化した範囲のz-indexのみ再割り当て
+                    if let Some(old_pos) = self.articles.iter().position(|(n, _)| *n == idx) {
+                        let entry = self.articles.remove(old_pos);
+                        self.articles.push(entry);
+                        for (new_z, (n, _)) in self.articles[old_pos..].iter().enumerate() {
                             let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                            cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&z.to_string())));
+                            cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&(old_pos + new_z).to_string())));
                         }
                     }
                 }
                 self.drag_target = None;
                 self.drag_corner = None;
-                self.is_dragging = false;
                 (vec![], cmds)
             }
             _ => (vec![], vec![]),
