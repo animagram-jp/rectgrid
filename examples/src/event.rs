@@ -50,7 +50,7 @@ impl Handler {
             articles:     alloc::vec![
                               (1, BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
                               (2, BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
-                              (3, BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] }),
+                              (3, BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(2.0), Unit::new(3.0)] }),
                           ],
             drag_target:  None,
             drag_corner:  None,
