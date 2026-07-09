@@ -123,7 +123,8 @@ impl Handler {
                     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                     cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&top_z.to_string())));
                     if let Some(cursor) = corner_cursor(self.drag_corner) {
-                        cmds.push(Command::new(Operation::SetCursor, &article.encode(), None, Some(cursor)));
+                        let section = Id::new(&[(Tag::Section, None)]);
+                        cmds.push(Command::new(Operation::SetCursor, &section.encode(), None, Some(cursor)));
                     }
                 }
                 self.drag_target = target;
@@ -180,8 +181,8 @@ impl Handler {
                 let mut cmds = vec![];
                 if let Some(idx) = self.drag_target {
                     if self.drag_corner.is_some() {
-                        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
-                        cmds.push(Command::new(Operation::SetCursor, &article.encode(), None, Some("")));
+                        let section = Id::new(&[(Tag::Section, None)]);
+                        cmds.push(Command::new(Operation::SetCursor, &section.encode(), None, Some("")));
                     }
                     if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
                         let bx = &mut pos.1;

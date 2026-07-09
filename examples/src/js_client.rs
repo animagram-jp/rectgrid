@@ -18,11 +18,11 @@ pub enum Operation {
     SetZIndex,
     SetBackground,
     SetTranslate,
+    SetCursor,
     ShowModal,
     CloseModal,
     Focus,
     JsFn,
-    SetCursor,
 }
 
 impl Operation {
@@ -39,11 +39,11 @@ impl Operation {
             Self::SetZIndex       =>  9,
             Self::SetBackground   => 10,
             Self::SetTranslate    => 11,
-            Self::ShowModal       => 12,
-            Self::CloseModal      => 13,
-            Self::Focus           => 14,
-            Self::JsFn            => 15,
-            Self::SetCursor       => 16,
+            Self::SetCursor       => 12,
+            Self::ShowModal       => 13,
+            Self::CloseModal      => 14,
+            Self::Focus           => 15,
+            Self::JsFn            => 16,
         }
     }
 }

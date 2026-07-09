@@ -23,7 +23,7 @@ static ALLOCATOR: GlobalDlmalloc = GlobalDlmalloc;
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {{
-        web_sys::console::error_1(
+        web_sys::console::log_1(
             &wasm_bindgen::JsValue::from_str(&format!($($arg)*))
         );
     }};
