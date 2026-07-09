@@ -103,6 +103,22 @@ impl<const D: usize> BBox<D> {
     /// base/offsetをfloorして整数格子にスナップする。
     /// extendはbaseにのみ適用し、floor前に加算する。
     /// (例: extend=-0.5 → 0.5以上食い込んでいれば繰り上げ、未満なら切り捨て)
+    ///
+    /// ```
+    /// use rectgrid::{BBox, Unit};
+    /// let mut bx = BBox {
+    ///     base:   [Unit::new(2.6), Unit::new(0.6)],
+    ///     offset: [Unit::new(1.9), Unit::new(3.0)],
+    /// };
+    /// bx.snap_floor(Some([Unit::new(-0.5), Unit::new(-0.5)]));
+    /// // base: 2.6 + (-0.5) = 2.1 → floor = 2.0
+    /// assert_eq!(bx.base[0].get(), 2.0);
+    /// // base: 0.6 + (-0.5) = 0.1 → floor = 0.0
+    /// assert_eq!(bx.base[1].get(), 0.0);
+    /// // offset: extendなし、そのままfloor
+    /// assert_eq!(bx.offset[0].get(), 1.0);
+    /// assert_eq!(bx.offset[1].get(), 3.0);
+    /// ```
     pub fn snap_floor(&mut self, extend: Option<[Unit; D]>) -> &mut Self {
         for (d, u) in self.base.iter_mut().enumerate() {
             let v = if let Some(ext) = extend { *u + ext[d] } else { *u };
@@ -116,6 +132,17 @@ impl<const D: usize> BBox<D> {
 
     /// offsetの全軸が非ゼロか(=幾何的な面積/体積を持つBBoxか)を返す。
     /// いずれかの軸が0の場合、線分や点として面積を持たないとみなしfalseを返す。
+    ///
+    /// ```
+    /// use rectgrid::{BBox, Unit};
+    /// let area = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(1.0), Unit::new(3.0)] };
+    /// assert!(area.has_size());
+    /// // x軸のoffsetが0(線分) → 面積なし
+    /// let segment = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(0.0), Unit::new(3.0)] };
+    /// assert!(!segment.has_size());
+    /// let point = BBox { base: [Unit::new(0.0); 2], offset: [Unit::new(0.0); 2] };
+    /// assert!(!point.has_size());
+    /// ```
     pub fn has_size(&self) -> bool {
         self.offset.iter().all(|u| u.get() != 0.0)
     }
@@ -141,6 +168,24 @@ impl IncrementFunction {
     /// 式から評価クロージャを生成する。Unit座標(f64) -> px座標(originとの相対距離)。
     /// 端数は線形補間でpxに変換する。
     /// VectorListが空など、定義が評価不能な場合はInvalidDefinitionを返す。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{IncrementFunction, Px};
+    ///
+    /// // Scale: 端数もそのまま線形倍
+    /// let f = IncrementFunction::Scale(10.0).accumulate().unwrap();
+    /// assert_eq!(f(2.5).unwrap().get(), 25.0);
+    ///
+    /// // VectorList: 整数indexは列挙値そのもの、端数は隣接値との線形補間
+    /// let f = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
+    /// assert_eq!(f(1.0).unwrap().get(), 10.0);
+    /// assert_eq!(f(1.5).unwrap().get(), 20.0);
+    ///
+    /// // 空のVectorListは評価不能
+    /// use rectgrid::RectgridError;
+    /// assert!(matches!(IncrementFunction::VectorList(alloc::vec![]).accumulate(), Err(RectgridError::InvalidDefinition)));
+    /// ```
     pub fn accumulate(&self) -> Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError> {
         match self {
             // 差分を0..floor(x)で累積し、端数ぶんは次の差分を線形補間で加算。
@@ -203,6 +248,15 @@ impl<const D: usize> RectGrid<D> {
         Ok(Self { origin, accumulator })
     }
 
+    /// d軸の定義を差し替える。以降のunit_to_px/point_to_unit等はこの新しい定義で評価される。
+    ///
+    /// ```
+    /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
+    /// let mut grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(10.0)]).unwrap();
+    /// assert_eq!(grid.unit_to_px(0, &Unit::new(2.0)).unwrap().get(), 20.0);
+    /// grid.set_definition(IncrementFunction::Scale(100.0), 0).unwrap();
+    /// assert_eq!(grid.unit_to_px(0, &Unit::new(2.0)).unwrap().get(), 200.0);
+    /// ```
     pub fn set_definition(&mut self, definition: IncrementFunction, d: usize) -> Result<(), RectgridError> {
         self.accumulator[d] = definition.accumulate()?;
         Ok(())
@@ -212,6 +266,19 @@ impl<const D: usize> RectGrid<D> {
     /// pointはviewport等の外部px座標のまま渡してよい。originを差し引いたローカル座標に補正してから変換する。
     /// 呼び出し側の契約: 各軸のaccumulatorはUnit>=0の範囲で単調非減少であること。
     /// 単調非減少でない場合(Scaleへ負の値を与えた場合やForwardDifferenceが減少する差分を返す場合)は結果を保証しない。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, Px};
+    /// use rectgrid::RectgridError;
+    /// let grid = RectGrid::<1>::new(
+    ///     [Px::new(0.0)],
+    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)])],
+    /// ).unwrap();
+    /// // 定義域(0..=30px)を超えるpxは、最後の有効indexを添えたOutOfIndexを返す
+    /// let result = grid.point_to_unit([Px::new(100.0)]);
+    /// assert!(matches!(result[0], Err(RectgridError::OutOfIndex(2))));
+    /// ```
     pub fn point_to_unit(&self, point: [Px; D]) -> [Result<Unit, RectgridError>; D] {
         from_fn(|i| self.px_to_unit_axis(i, point[i] - self.origin[i]))
     }
@@ -256,20 +323,56 @@ impl<const D: usize> RectGrid<D> {
         Ok(Unit::new((lo + hi) / 2.0))
     }
 
+    /// unit座標をpxへ変換する(accumulatorをそのまま評価する)。unitは原点からの絶対値であること。
+    ///
+    /// ```
+    /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
+    /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(200.0)]).unwrap();
+    /// assert_eq!(grid.unit_to_px(0, &Unit::new(2.25)).unwrap().get(), 450.0);
+    /// ```
     pub fn unit_to_px(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
         self.accumulator[d](unit.get())
     }
 
+    /// 複数のunit座標点をpxへ変換する。評価不能な軸は0.0pxとして扱う(呼び出し側は描画の続行を優先する用途)。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
+    /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(200.0)]).unwrap();
+    /// let points = alloc::vec![[Unit::new(1.0)], [Unit::new(2.0)]];
+    /// let px = grid.point_as_px(&points);
+    /// assert_eq!(px[0][0].get(), 200.0);
+    /// assert_eq!(px[1][0].get(), 400.0);
+    /// ```
     pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Px; D]> {
         points.iter().map(|pt| {
             from_fn(|d| self.unit_to_px(d, &pt[d]).unwrap_or(Px::new(0.0)))
         }).collect()
     }
 
+    /// 複数のBBoxを(base_px, offset_px)へ変換する。offset_pxはbase位置を踏まえた実際の辺の長さ
+    /// (unit_to_px(base+offset) - unit_to_px(base))であり、非線形なaccumulator(ForwardDifference/VectorList)でも
+    /// base位置に応じた正しい長さになる。評価不能な軸は0.0pxとして扱う。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// // VectorListは非線形: [0, 10, 30, 60]px。base=1でoffset=2ならば、10..60pxで幅50px。
+    /// let grid = RectGrid::<1>::new(
+    ///     [Px::new(0.0)],
+    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0), Px::new(60.0)])],
+    /// ).unwrap();
+    /// let boxes = alloc::vec![BBox { base: [Unit::new(1.0)], offset: [Unit::new(2.0)] }];
+    /// let result = grid.box_as_px(&boxes);
+    /// assert_eq!(result[0].0[0].get(), 10.0);
+    /// assert_eq!(result[0].1[0].get(), 50.0);
+    /// ```
     pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<([Px; D], [Px; D])> {
         boxes.iter().map(|bx| {
-            let base_px   = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
-            let offset_px = from_fn(|d| self.unit_to_px(d, &bx.offset[d]).unwrap_or(Px::new(0.0)));
+            let base_px:   [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
+            let end_px:    [Px; D] = from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(0.0)));
+            let offset_px: [Px; D] = from_fn(|d| end_px[d] - base_px[d]);
             (base_px, offset_px)
         }).collect()
     }
@@ -306,6 +409,23 @@ impl<const D: usize> RectGrid<D> {
 
     /// pointにhitするboxesのうち、indexが最大のものを返す(boxesはindexが大きいほど優先度が高いとみなす)。
     /// 複数hitする場合はindexの大きい方を優先するため、末尾から走査する。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(0.0), Px::new(0.0)],
+    ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+    /// ).unwrap();
+    /// let boxes = alloc::vec![
+    ///     BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+    ///     BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+    /// ];
+    /// // (450, 10)pxはboxes[1](x: 400..600px)の内側
+    /// assert_eq!(grid.hit_test([Px::new(450.0), Px::new(10.0)], &boxes, None), Some(1));
+    /// // どのboxにもhitしない座標
+    /// assert_eq!(grid.hit_test([Px::new(-100.0), Px::new(-100.0)], &boxes, None), None);
+    /// ```
     pub fn hit_test(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<usize> {
         boxes.iter()
             .enumerate()
@@ -315,6 +435,21 @@ impl<const D: usize> RectGrid<D> {
 
     /// hit_testと同様にindex最大のhitを返しつつ、hitしたboxに対するget_ratio相当の値も併せて返す。
     /// ratioはextendの影響を受けない、box内側基準の比率(base側=0.0, offset側=1.0)。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(0.0), Px::new(0.0)],
+    ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+    /// ).unwrap();
+    /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] }];
+    /// // box中央(100, 32)pxはratio(0.5, 0.5)
+    /// let (i, ratio) = grid.hit_test_with_ratio([Px::new(100.0), Px::new(32.0)], &boxes, None).unwrap();
+    /// assert_eq!(i, 0);
+    /// assert!((ratio[0].get() - 0.5).abs() < 1e-9);
+    /// assert!((ratio[1].get() - 0.5).abs() < 1e-9);
+    /// ```
     pub fn hit_test_with_ratio(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Option<(usize, [Parameter; D])> {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         boxes.iter()
@@ -327,6 +462,22 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(0.0), Px::new(0.0)],
+    ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+    /// ).unwrap();
+    /// // 2軸とも重なるboxes[0](x: 0..200px, y: 0..64px)とboxes[1](x: 100..300px, y: 0..64px)
+    /// let boxes = alloc::vec![
+    ///     BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+    ///     BBox { base: [Unit::new(0.5), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] },
+    /// ];
+    /// // (150, 10)pxは両方のboxにhitする
+    /// assert_eq!(grid.hit_tests([Px::new(150.0), Px::new(10.0)], &boxes, None), alloc::vec![true, true]);
+    /// ```
     pub fn hit_tests(&self, point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>) -> Vec<bool> {
         boxes.iter()
             .map(|bx| self.contains(point, bx, extend).0)
@@ -336,6 +487,22 @@ impl<const D: usize> RectGrid<D> {
     /// `ξ_d = (point_d − base_d) / offset_d`
     /// 単一のboxの各辺長(offset)を1とした、符号付き局所座標(ratio)。
     /// pointはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
+    ///
+    /// ```
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(0.0), Px::new(0.0)],
+    ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+    /// ).unwrap();
+    /// let bx = BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] };
+    /// // boxはx: 200..400px, y: 0..64px。(300, 16)pxは各軸の1/4地点
+    /// let ratio = grid.get_ratio([Px::new(300.0), Px::new(16.0)], bx);
+    /// assert!((ratio[0].get() - 0.5).abs() < 1e-9);
+    /// assert!((ratio[1].get() - 0.25).abs() < 1e-9);
+    /// // box範囲外(base側)はratioが負になる
+    /// let ratio = grid.get_ratio([Px::new(100.0), Px::new(0.0)], bx);
+    /// assert!((ratio[0].get() - (-0.5)).abs() < 1e-9);
+    /// ```
     pub fn get_ratio(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         let base_px   = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
@@ -343,13 +510,28 @@ impl<const D: usize> RectGrid<D> {
         Self::ratio_from_px(local, base_px, offset_px)
     }
 
+    /// 複数のBBoxを(base_px, offset_px)へ変換する。box_as_pxと同じ計算だが、
+    /// 評価不能な軸があるboxはErrを返す(box_as_pxのように0.0pxで代替しない、厳密なvariant)。
+    ///
+    /// ```
+    /// extern crate alloc;
+    /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
+    /// use rectgrid::RectgridError;
+    /// let grid = RectGrid::<1>::new(
+    ///     [Px::new(0.0)],
+    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)])],
+    /// ).unwrap();
+    /// let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
+    /// // offset=5はVectorListの定義域(0..=1)を超えるためOutOfIndex
+    /// assert!(matches!(grid.as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+    /// ```
     pub fn as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
         boxes.iter().map(|bx| -> Result<([Px; D], [Px; D]), RectgridError> {
             let mut base_px   = [Px::new(0.0); D];
             let mut offset_px = [Px::new(0.0); D];
-            for i in 0..D {
-                base_px[i]   = self.unit_to_px(i, &bx.base[i])?;
-                offset_px[i] = self.unit_to_px(i, &bx.offset[i])?;
+            for d in 0..D {
+                base_px[d]   = self.unit_to_px(d, &bx.base[d])?;
+                offset_px[d] = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))? - base_px[d];
             }
             Ok((base_px, offset_px))
         }).collect()
@@ -359,6 +541,17 @@ impl<const D: usize> RectGrid<D> {
     /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
     /// drag開始時はzにbase_px(要素基準位置)を渡すとドラッグオフセットが、
     /// drag中はzにそのオフセットを渡すと現在の要素基準位置が求まる。
+    ///
+    /// ```
+    /// use rectgrid::{RectGrid, IncrementFunction, Px};
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(10.0), Px::new(20.0)],
+    ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+    /// ).unwrap();
+    /// // origin(10, 20)を補正した(220, 30)pxを掴んだ位置から、要素基準px(200, 0)を引くとドラッグオフセット
+    /// let drag_offset = grid.offset([Px::new(230.0), Px::new(50.0)], [Px::new(200.0), Px::new(0.0)]);
+    /// assert_eq!((drag_offset[0].get(), drag_offset[1].get()), (20.0, 30.0));
+    /// ```
     pub fn offset(&self, pointer: [Px; D], z: [Px; D]) -> [Px; D] {
         from_fn(|d| (pointer[d] - self.origin[d]) - z[d])
     }
@@ -380,6 +573,26 @@ impl<const D: usize> RectGrid<D> {
 /// 角判定結果の各要素: Some(true)=base側の辺付近([0, threshold]), Some(false)=offset側の辺付近([1-threshold, 1]), None=非該当。
 /// 全軸がSomeの場合のみ角ハンドルとして扱う(呼び出し側でNoneを許容するかは呼び出し側の判断)。
 /// ratioがNoneになるのは、has_sizeでないか、pointがbx範囲外の場合。
+///
+/// ```
+/// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
+/// let grid = RectGrid::<2>::new(
+///     [Px::new(0.0), Px::new(0.0)],
+///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+/// ).unwrap();
+/// let bx = BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] };
+/// // bx左上隅(400, 0)px付近をクリック → base側同士の角
+/// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1);
+/// assert_eq!(corner, Some([Some(true), Some(true)]));
+/// // bx中央付近は角に該当しないが、ratio自体は取得できる
+/// let (ratio, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1);
+/// assert!(ratio.is_some());
+/// assert_eq!(corner, None);
+/// // bx範囲外はratioも取得できない
+/// let (ratio, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1);
+/// assert!(ratio.is_none());
+/// assert_eq!(corner, None);
+/// ```
 pub fn corner_test<const D: usize>(
     grid:      &RectGrid<D>,
     point:     [Px; D],
@@ -403,6 +616,20 @@ pub fn corner_test<const D: usize>(
 /// Drag中、角ハンドルドラッグによってBBoxのbase/offsetを更新し、更新後のBBoxを返す。
 /// corner[d] = Some(base_side): base_side==trueならbase側の辺を、falseならoffset側の辺を動かす。
 /// 新しいoffsetは最小1.0unitを保証する(base/offsetが交差しないように)。
+///
+/// ```
+/// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, drag_resize};
+/// let grid = RectGrid::<2>::new(
+///     [Px::new(0.0), Px::new(0.0)],
+///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+/// ).unwrap();
+/// let bx = BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(3.0)] };
+/// // 左上(base側)の角を(150, 0)pxへドラッグ → x軸のbaseが0unitへ縮む
+/// let resized = drag_resize(&grid, [Px::new(150.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
+/// assert_eq!(resized.base[0].get(), 0.0);
+/// assert_eq!(resized.offset[0].get(), 3.0); // base 2.0 + offset 1.0 - new_base 0.0
+/// assert_eq!(resized.offset[1].get(), 3.0); // y軸は未変更
+/// ```
 pub fn drag_resize<const D: usize>(
     grid:    &RectGrid<D>,
     pointer: [Px; D],
@@ -432,6 +659,17 @@ pub fn drag_resize<const D: usize>(
 /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。
 /// BBoxはbaseが常にUnitのため、drag中のpx位置はBBoxを更新せずここで返すのみに留め、
 /// DragEnd相当のタイミングでsnap_region_to_unitに通してBBoxへ反映する。
+///
+/// ```
+/// use rectgrid::{RectGrid, IncrementFunction, Px, drag_translate};
+/// let grid = RectGrid::<2>::new(
+///     [Px::new(10.0), Px::new(20.0)],
+///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+/// ).unwrap();
+/// // pointerをviewport座標(230, 50)、drag_offsetを(20, 30)として移動
+/// let px = drag_translate(&grid, [Px::new(230.0), Px::new(50.0)], [Px::new(20.0), Px::new(30.0)]);
+/// assert_eq!((px[0].get(), px[1].get()), (200.0, 0.0));
+/// ```
 pub fn drag_translate<const D: usize>(
     grid:        &RectGrid<D>,
     pointer:     [Px; D],
@@ -443,6 +681,23 @@ pub fn drag_translate<const D: usize>(
 /// DragEnd時、面積を持つBBoxの移動ドラッグ結果をUnit格子にスナップし、更新後のBBox(base)を返す。
 /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
 /// extendはunit変換値にfloor前に加算する。
+///
+/// ```
+/// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, snap_region_to_unit};
+/// let grid = RectGrid::<2>::new(
+///     [Px::new(0.0), Px::new(0.0)],
+///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+/// ).unwrap();
+/// let bx = BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(1.0), Unit::new(1.0)] };
+/// // pointer(430, 70)px、drag_offset(0, 0) → local(430, 70)px = (2.15, 1.09375)unit。extend +0.25してfloor。
+/// let snapped = snap_region_to_unit(
+///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], &bx,
+///     Some([Unit::new(0.25), Unit::new(0.25)]),
+/// ).unwrap();
+/// assert_eq!(snapped.base[0].get(), 2.0);
+/// assert_eq!(snapped.base[1].get(), 1.0);
+/// assert_eq!(snapped.offset[0].get(), 1.0); // offsetはfloor済みでそのまま
+/// ```
 pub fn snap_region_to_unit<const D: usize>(
     grid:        &RectGrid<D>,
     pointer:     [Px; D],
@@ -461,6 +716,21 @@ pub fn snap_region_to_unit<const D: usize>(
 
 /// DragEnd時、点BBox(面積なし)の移動ドラッグ結果をUnit格子にスナップしたBBoxを求める。
 /// pointerはviewport等の外部px座標のまま渡してよい(内部でoriginを差し引く)。drag_offsetはdrag_translateに渡したものと同じ値。
+///
+/// ```
+/// use rectgrid::{RectGrid, IncrementFunction, Px, Unit, snap_point_to_unit};
+/// let grid = RectGrid::<2>::new(
+///     [Px::new(0.0), Px::new(0.0)],
+///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
+/// ).unwrap();
+/// // pointer(430, 70)px、drag_offset(0, 0) → (2.15, 1.09375)unit。snap +0.25してfloor。
+/// let snapped = snap_point_to_unit(
+///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], [Unit::new(0.25), Unit::new(0.25)],
+/// ).unwrap();
+/// assert_eq!(snapped.base[0].get(), 2.0);
+/// assert_eq!(snapped.base[1].get(), 1.0);
+/// assert!(!snapped.has_size());
+/// ```
 pub fn snap_point_to_unit<const D: usize>(
     grid:        &RectGrid<D>,
     pointer:     [Px; D],
