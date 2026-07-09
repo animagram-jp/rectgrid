@@ -2,9 +2,11 @@
 name = "rectgrid"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Region operations on rectilinear grids with arbitrary unit systems."
 license = "Apache-2.0"
-categories  = ["no-std", "wasm"]
+keywords = ["layout", "grid", "bbox", "geometory", "no-std"]
+categories = ["graphics", "gui", "data-structures", "no-std", "wasm"]
 exclude = ["examples/"]
 
 [dependencies]
