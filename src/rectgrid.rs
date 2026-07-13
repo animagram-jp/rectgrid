@@ -146,72 +146,179 @@ pub enum IncrementFunction {
 }
 
 impl IncrementFunction {
-    /// Builds an evaluation closure from the definition: unit coordinate (f64) -> px coordinate (distance relative to origin).
-    /// Fractional parts are converted to px by linear interpolation.
+    /// Builds forward/inverse accumulators from the definition.
+    /// forward: unit coordinate (f64) -> px coordinate (distance relative to origin); fractional parts are converted to px by linear interpolation.
+    /// inverse: px coordinate -> unit coordinate.
     /// Returns InvalidDefinition if the definition cannot be evaluated, e.g. an empty VectorList.
     ///
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{IncrementFunction, Px};
     ///
-    /// let f = IncrementFunction::Scale(10.0).accumulate().unwrap();
-    /// assert_eq!(f(2.5).unwrap().get(), 25.0);
+    /// let acc = IncrementFunction::Scale(10.0).accumulate().unwrap();
+    /// assert_eq!(acc.forward(2.5).unwrap().get(), 25.0);
     ///
-    /// let f = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
-    /// assert_eq!(f(1.0).unwrap().get(), 10.0);
-    /// assert_eq!(f(1.5).unwrap().get(), 20.0);
+    /// let acc = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
+    /// assert_eq!(acc.forward(1.0).unwrap().get(), 10.0);
+    /// assert_eq!(acc.forward(1.5).unwrap().get(), 20.0);
     ///
     /// use rectgrid::RectgridError;
     /// assert!(matches!(IncrementFunction::VectorList(alloc::vec![]).accumulate(), Err(RectgridError::InvalidDefinition)));
     /// ```
-    pub fn accumulate(&self) -> Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError> {
+    pub fn accumulate(self) -> Result<Accumulator, RectgridError> {
         match self {
-            // Accumulate differences over 0..floor(x); the fractional remainder is added via linear interpolation of the next difference.
-            Self::ForwardDifference(f) => {
-                let f = f.clone();
-                Ok(Box::new(move |x| {
-                    let n = libm::floor(x) as u32;
-                    let frac = x - n as f64;
-                    let mut acc = Px::new(0.0);
-                    for k in 0..n {
-                        acc += f(k)?;
-                    }
-                    if frac != 0.0 {
-                        acc += f(n)? * frac;
-                    }
-                    Ok(acc)
-                }))
-            }
-            // Array of accumulated coordinates. Indexed by integer; fractions are linearly interpolated with the neighbor. Out of range is a boundary.
+            Self::Scale(s) => Ok(Accumulator::Scale(s)),
             Self::VectorList(pxs) => {
                 if pxs.is_empty() {
                     return Err(RectgridError::InvalidDefinition);
                 }
-                let pxs = pxs.clone();
-                Ok(Box::new(move |x| {
-                    let last = (pxs.len() - 1) as u32;
-                    let n = libm::floor(x) as usize;
-                    let frac = x - n as f64;
-                    let lo = *pxs.get(n).ok_or(RectgridError::OutOfIndex(last))?;
-                    if frac == 0.0 {
-                        return Ok(lo);
-                    }
-                    let hi = *pxs.get(n + 1).ok_or(RectgridError::OutOfIndex(last))?;
-                    Ok(lo + (hi - lo) * frac)
-                }))
+                Ok(Accumulator::VectorList(pxs))
             }
-            Self::Scale(s) => {
-                let s = *s;
-                Ok(Box::new(move |x| Ok(Px::new(s * x))))
+            // The forward closure's boundary shape is unknown in general, so the inverse is a generic
+            // binary search (widen the range, then converge) closed over the same closure.
+            Self::ForwardDifference(f) => {
+                let fwd = f.clone();
+                let forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>> = Box::new(move |x| {
+                    let n = libm::floor(x) as u32;
+                    let frac = x - n as f64;
+                    let mut acc = Px::new(0.0);
+                    for k in 0..n {
+                        acc += fwd(k)?;
+                    }
+                    if frac != 0.0 {
+                        acc += fwd(n)? * frac;
+                    }
+                    Ok(acc)
+                });
+                let inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> = Box::new(move |target| {
+                    generic_binary_search_inverse(&f, target)
+                });
+                Ok(Accumulator::ForwardDifference { forward, inverse })
             }
         }
     }
 }
 
+/// Numerically inverts px to unit for a ForwardDifference definition (the only variant without an
+/// analytical or array-based inverse). Widens [lo, hi] until it brackets target, then binary searches.
+/// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
+fn generic_binary_search_inverse(f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>, target: Px) -> Result<Unit, RectgridError> {
+    let target = target.get();
+    let eval = |x: f64| -> Result<Px, RectgridError> {
+        let n = libm::floor(x) as u32;
+        let frac = x - n as f64;
+        let mut acc = Px::new(0.0);
+        for k in 0..n {
+            acc += f(k)?;
+        }
+        if frac != 0.0 {
+            acc += f(n)? * frac;
+        }
+        Ok(acc)
+    };
+
+    let mut lo = 0.0;
+    let mut hi = 1.0;
+    loop {
+        match eval(hi) {
+            Ok(px) if px.get() >= target => break,
+            Ok(_) => {
+                lo = hi;
+                hi *= 2.0;
+            }
+            // Reached the end of the domain; check whether target is reachable within that range.
+            Err(RectgridError::OutOfIndex(last)) => {
+                hi = last as f64;
+                if eval(hi)?.get() < target {
+                    return Err(RectgridError::OutOfIndex(last));
+                }
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    const EPSILON: f64 = 1e-9;
+    for _ in 0..64 {
+        if hi - lo < EPSILON {
+            break;
+        }
+        let mid = (lo + hi) / 2.0;
+        if eval(mid)?.get() < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(Unit::new((lo + hi) / 2.0))
+}
+
+/// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
+/// Each variant holds only the data it needs: Scale is a bare f64 (no boxing), VectorList holds the
+/// array directly, and ForwardDifference is the only case still holding boxed closures because its
+/// inverse requires generic binary search.
+pub enum Accumulator {
+    Scale(f64),
+    VectorList(Vec<Px>),
+    ForwardDifference {
+        forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>,
+        inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>>,
+    },
+}
+
+impl Accumulator {
+    /// unit coordinate (f64) -> px coordinate.
+    pub fn forward(&self, x: f64) -> Result<Px, RectgridError> {
+        match self {
+            Self::Scale(s) => Ok(Px::new(s * x)),
+            Self::VectorList(pxs) => {
+                let last = (pxs.len() - 1) as u32;
+                let n = libm::floor(x) as usize;
+                let frac = x - n as f64;
+                let lo = *pxs.get(n).ok_or(RectgridError::OutOfIndex(last))?;
+                if frac == 0.0 {
+                    return Ok(lo);
+                }
+                let hi = *pxs.get(n + 1).ok_or(RectgridError::OutOfIndex(last))?;
+                Ok(lo + (hi - lo) * frac)
+            }
+            Self::ForwardDifference { forward, .. } => forward(x),
+        }
+    }
+
+    /// px coordinate -> unit coordinate.
+    pub fn inverse(&self, target: Px) -> Result<Unit, RectgridError> {
+        match self {
+            Self::Scale(s) => Ok(Unit::new(target.get() / s)),
+            Self::VectorList(pxs) => vector_list_inverse(pxs, target),
+            Self::ForwardDifference { inverse, .. } => inverse(target),
+        }
+    }
+}
+
+/// Inverse for VectorList: pxs is known to be non-empty and monotonically non-decreasing, so unlike
+/// ForwardDifference this needs no range-widening, just a partition_point over the array followed by
+/// an O(1) linear-interpolation solve within the located segment.
+fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
+    let last = (pxs.len() - 1) as u32;
+    let t = target.get();
+    if t < pxs[0].get() || t > pxs[pxs.len() - 1].get() {
+        return Err(RectgridError::OutOfIndex(last));
+    }
+    let n = pxs.partition_point(|p| p.get() < t).saturating_sub(1);
+    let lo = pxs[n].get();
+    let hi = pxs.get(n + 1).map(|p| p.get()).unwrap_or(lo);
+    if hi == lo {
+        return Ok(Unit::new(n as f64));
+    }
+    let frac = (t - lo) / (hi - lo);
+    Ok(Unit::new(n as f64 + frac))
+}
+
 pub struct RectGrid<const D: usize> {
     pub origin: [Px; D],
     /// f([Unit; D]) -> f([Px; D])
-    accumulator: [Box<dyn Fn(f64) -> Result<Px, RectgridError>>; D],
+    accumulator: [Accumulator; D],
 }
 
 impl<const D: usize> RectGrid<D> {
@@ -240,7 +347,8 @@ impl<const D: usize> RectGrid<D> {
         Ok(())
     }
 
-    /// Numerically inverts px to unit (the accumulator only holds a one-way Unit -> Px closure).
+    /// Inverts px to unit. Scale/VectorList resolve analytically or via array search; ForwardDifference
+    /// falls back to binary search (see Accumulator::inverse).
     /// point may be passed as-is as an external px coordinate (e.g. viewport); it is corrected to a local coordinate by subtracting origin before conversion.
     /// Caller contract: each axis's accumulator must be monotonically non-decreasing over Unit >= 0.
     /// If it is not (e.g. a negative value given to Scale, or ForwardDifference returning a decreasing difference), the result is not guaranteed.
@@ -256,43 +364,7 @@ impl<const D: usize> RectGrid<D> {
     }
 
     fn px_to_unit_axis(&self, i: usize, target: Px) -> Result<Unit, RectgridError> {
-        let target = target.get();
-        let f = |x: f64| self.accumulator[i](x);
-
-        let mut lo = 0.0;
-        let mut hi = 1.0;
-        loop {
-            match f(hi) {
-                Ok(px) if px.get() >= target => break,
-                Ok(_) => {
-                    lo = hi;
-                    hi *= 2.0;
-                }
-                // Reached the end of the domain; check whether target is reachable within that range.
-                Err(RectgridError::OutOfIndex(last)) => {
-                    hi = last as f64;
-                    if f(hi)?.get() < target {
-                        return Err(RectgridError::OutOfIndex(last));
-                    }
-                    break;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        const EPSILON: f64 = 1e-9;
-        for _ in 0..64 {
-            if hi - lo < EPSILON {
-                break;
-            }
-            let mid = (lo + hi) / 2.0;
-            if f(mid)?.get() < target {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        Ok(Unit::new((lo + hi) / 2.0))
+        self.accumulator[i].inverse(target)
     }
 
     /// Converts a unit coordinate to px (evaluates the accumulator directly). unit must be an absolute value from the origin.
@@ -303,7 +375,7 @@ impl<const D: usize> RectGrid<D> {
     /// assert_eq!(grid.unit_to_px(0, &Unit::new(2.25)).unwrap().get(), 450.0);
     /// ```
     pub fn unit_to_px(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
-        self.accumulator[d](unit.get())
+        self.accumulator[d].forward(unit.get())
     }
 
     /// Converts multiple unit coordinate points to px. Returns Err for a point with an unevaluable axis (evaluation stops per point; other points are unaffected).
@@ -753,8 +825,24 @@ mod tests {
         // f(i) = (i+1)*10 -> accumulated at x=2.5: 10+20+0.5*30 = 45
         let f = IncrementFunction::ForwardDifference(Rc::new(|i| Ok(Px::new((i + 1) as f64 * 10.0))));
         let acc = f.accumulate().unwrap();
-        assert_eq!(acc(0.0).unwrap().get(), 0.0);
-        assert!((acc(2.5).unwrap().get() - 45.0).abs() < 1e-9);
+        assert_eq!(acc.forward(0.0).unwrap().get(), 0.0);
+        assert!((acc.forward(2.5).unwrap().get() - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn accumulator_scale_inverse_is_exact() {
+        let acc = IncrementFunction::Scale(200.0).accumulate().unwrap();
+        assert_eq!(acc.inverse(Px::new(450.0)).unwrap().get(), 2.25);
+    }
+
+    #[test]
+    fn accumulator_vector_list_inverse_boundaries() {
+        let acc = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
+        assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
+        assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 2.0);
+        assert!((acc.inverse(Px::new(20.0)).unwrap().get() - 1.5).abs() < 1e-9);
+        assert!(matches!(acc.inverse(Px::new(-1.0)), Err(RectgridError::OutOfIndex(2))));
+        assert!(matches!(acc.inverse(Px::new(31.0)), Err(RectgridError::OutOfIndex(2))));
     }
 
     #[test]
@@ -812,7 +900,6 @@ mod tests {
             offset: [Unit::new(1.0), Unit::new(3.0)],
         };
         // Drag the offset-side (right) edge to 900px (unit 4.5 -> floor=4): offset = 4 - 2 = 2, base unchanged.
-        // Use a non-integer point: at an integer boundary (800px = unit 4.0), binary-search convergence error can shift the floored result.
         let resized = drag_resize(&grid, [Px::new(900.0), Px::new(0.0)], &bx, [Some(false), None]).unwrap();
         assert_eq!(resized.base[0].get(), 2.0);
         assert_eq!(resized.offset[0].get(), 2.0);

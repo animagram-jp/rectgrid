@@ -62,7 +62,12 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
 |                     | `VectorList` | `Vec<Px>` | - | An empty `Vec<Px>` is invalid |
 |                     | `Scale` | `f64` | - | - |
-|                     | `accumulate` | - | `Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError>` | - |
+|                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | Builds a forward/inverse `Accumulator` from the definition |
+| `Accumulator` | `Scale` | `f64` | - | Inverse resolves analytically (`target / s`), no search needed |
+|               | `VectorList` | `Vec<Px>` | - | Inverse resolves via `partition_point` + O(1) linear-interpolation solve |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | The only variant still boxing closures; inverse falls back to binary search |
+|               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit coordinate -> px |
+|               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit coordinate |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | Start point |
 |               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | Replaces the definition for axis d |
@@ -85,8 +90,8 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 
 | Item | Port | Parameter | Return | Description |
 |-|-|-|-|-|
-| `RectGrid<D>` | `accumulator` | - | `[Box<dyn Fn(f64) -> Result<Px, RectgridError>>; D]` | f(Unit) -> Result<Px> per axis |
-|               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | Binary search inverting accumulator[i] |
+| `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | Forward/inverse conversion per axis |
+|               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | Delegates to `accumulator[i].inverse` |
 |               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `(bool, [Px; D], [Px; D])` | Hit test backing hit_test/hit_tests/hit_test_with_parameter |
 |               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | Shared by get_parameter/hit_test_with_parameter |
 
@@ -125,7 +130,12 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
 |                     | `VectorList` | `Vec<Px>` | - | 空のVec<Px>は不正 |
 |                     | `Scale` | `f64` | - | - |
-|                     | `accumulate` | - | `Result<Box<dyn Fn(f64) -> Result<Px, RectgridError>>, RectgridError>` | - |
+|                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | 定義から順変換・逆変換を持つ`Accumulator`を構築する |
+| `Accumulator` | `Scale` | `f64` | - | 逆変換は解析的(`target / s`)に即決、探索不要 |
+|               | `VectorList` | `Vec<Px>` | - | 逆変換は`partition_point`と線形補間の逆算(O(1))で解決 |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | クロージャを保持し続ける唯一のバリアント。逆変換は二分探索にフォールバック |
+|               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit座標 -> px |
+|               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit座標 |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | 始点 |
 |               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | d軸の定義を差し替える |
@@ -148,7 +158,7 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 
 | アイテム | ポート | 引数 | 戻り値 | 説明 |
 |-|-|-|-|-|
-| `RectGrid<D>` | `accumulator` | - | `[Box<dyn Fn(f64) -> Result<Px, RectgridError>>; D]` | 各軸のf(Unit) -> Result<Px> |
-|               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | accumulator[i]を二分探索で逆変換 |
+| `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | 各軸の順変換・逆変換 |
+|               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | accumulator[i].inverseに委譲 |
 |               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `(bool, [Px; D], [Px; D])` | hit_test/hit_tests/hit_test_with_parameterの共通判定 |
 |               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | get_parameter/hit_test_with_parameterで共有 |
