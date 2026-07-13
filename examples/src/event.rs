@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::array::from_fn;
-use crate::js_client::{Command, Operation, EventType, Gesture, CanvasEvent, PointerState, dom::{Id, Tag}};
+use crate::js_client::{Command, EventType, Gesture, CanvasEvent, PointerState, dom::{Id, Tag}};
 use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test, drag_resize, drag_translate, snap_region_to_unit, snap_point_to_unit};
 
 // ============================================================
@@ -73,11 +73,11 @@ impl Handler {
             if let Ok((base_px, offset_px)) = px_result {
                 cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
                 if bx.has_size() {
-                    cmds.push(Command::new(Operation::SetWidth,  &article.encode(), None, Some(&format!("{:.2}", offset_px[0].get()))));
-                    cmds.push(Command::new(Operation::SetHeight, &article.encode(), None, Some(&format!("{:.2}", offset_px[1].get()))));
+                    cmds.push(Command::SetWidth  { id: article.encode(), px: offset_px[0].get() as u32 });
+                    cmds.push(Command::SetHeight { id: article.encode(), px: offset_px[1].get() as u32 });
                 }
             }
-            cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&z.to_string())));
+            cmds.push(Command::SetZIndex { id: article.encode(), z: z as i32 });
         }
         cmds.push(grid_background_cmd(self.section_width_px));
         (vec![], cmds)
@@ -122,10 +122,10 @@ impl Handler {
                     // drag開始時点で対象を最前面z-indexに
                     let top_z = self.articles.len();
                     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
-                    cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&top_z.to_string())));
+                    cmds.push(Command::SetZIndex { id: article.encode(), z: top_z as i32 });
                     if let Some(cursor) = corner_cursor(self.drag_corner) {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::new(Operation::SetCursor, &section.encode(), None, Some(cursor)));
+                        cmds.push(Command::SetCursor { id: section.encode(), value: cursor.to_string() });
                     }
                 }
                 self.drag_target = target;
@@ -164,8 +164,8 @@ impl Handler {
                         });
                         let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                         let mut cmds = vec![translate_card(idx, base_px[0].get(), base_px[1].get())];
-                        cmds.push(Command::new(Operation::SetWidth,  &article.encode(), None, Some(&format!("{:.2}", size_px[0].get()))));
-                        cmds.push(Command::new(Operation::SetHeight, &article.encode(), None, Some(&format!("{:.2}", size_px[1].get()))));
+                        cmds.push(Command::SetWidth  { id: article.encode(), px: size_px[0].get() as u32 });
+                        cmds.push(Command::SetHeight { id: article.encode(), px: size_px[1].get() as u32 });
                         return (vec![], cmds);
                     }
                     // 移動ドラッグ: BBoxはUnit座標のまま維持し、DragEndでスナップ
@@ -183,7 +183,7 @@ impl Handler {
                 if let Some(idx) = self.drag_target {
                     if self.drag_corner.is_some() {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::new(Operation::SetCursor, &section.encode(), None, Some("")));
+                        cmds.push(Command::SetCursor { id: section.encode(), value: String::new() });
                     }
                     if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
                         let bx = &mut pos.1;
@@ -214,7 +214,7 @@ impl Handler {
                         self.articles.push(entry);
                         for (new_z, (n, _)) in self.articles[old_pos..].iter().enumerate() {
                             let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                            cmds.push(Command::new(Operation::SetZIndex, &article.encode(), None, Some(&(old_pos + new_z).to_string())));
+                            cmds.push(Command::SetZIndex { id: article.encode(), z: (old_pos + new_z) as i32 });
                         }
                     }
                 }
@@ -241,8 +241,8 @@ impl Handler {
                     cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
                     if bx.has_size() {
                         let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                        cmds.push(Command::new(Operation::SetWidth,  &article.encode(), None, Some(&format!("{:.2}", offset_px[0].get()))));
-                        cmds.push(Command::new(Operation::SetHeight, &article.encode(), None, Some(&format!("{:.2}", offset_px[1].get()))));
+                        cmds.push(Command::SetWidth  { id: article.encode(), px: offset_px[0].get() as u32 });
+                        cmds.push(Command::SetHeight { id: article.encode(), px: offset_px[1].get() as u32 });
                     }
                 }
                 (vec![], cmds)
@@ -265,7 +265,7 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
          repeating-linear-gradient(to bottom, rgba(0,0,0,0.08) 0px, rgba(0,0,0,0.08) 1px, transparent 1px, transparent {y_unit_rem}rem)"
     );
     let section = Id::new(&[(Tag::Section, None)]);
-    Command::new(Operation::SetBackground, &section.encode(), None, Some(&bg))
+    Command::SetBackground { id: section.encode(), value: bg }
 }
 
 // ============================================================
@@ -274,12 +274,7 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
 
 fn translate_card(n: u32, x: f64, y: f64) -> Command {
     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(n))]);
-    Command::new(
-        Operation::SetTranslate,
-        &article.encode(),
-        Some(&(x as i64).to_string()),
-        Some(&(y as i64).to_string()),
-    )
+    Command::SetTranslate { id: article.encode(), x, y }
 }
 
 /// resizeハンドル対象のcorner([x_side, y_side], Some(true)=base側/Some(false)=offset側, None=非該当)から

@@ -1,6 +1,7 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
-use serde_wasm_bindgen::to_value;
+use serde::Serialize;
+use serde_wasm_bindgen::Serializer;
 use crate::js_client::{Command, EventType, detect_device, PointerState, detect_gesture, CanvasEvent};
 use crate::event::{Handler, Event};
 
@@ -56,7 +57,9 @@ impl App {
             self.events.extend(new_events);
             commands.extend(new_commands);
         }
-        to_value(&commands).unwrap_or(JsValue::NULL)
+        // Command::serialize uses serialize_map; force plain JS objects (not Map) so init.js's cmd.field access works.
+        let serializer = Serializer::new().serialize_maps_as_objects(true);
+        commands.serialize(&serializer).unwrap_or(JsValue::NULL)
     }
 
     fn dispatch(&mut self, event: Event) -> (Vec<Event>, Vec<Command>) {

@@ -1,71 +1,119 @@
 use wasm_bindgen::JsValue;
 use js_sys::Reflect;
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 // ============================================================
 // send operation
 // ============================================================
 
-pub enum Operation {
-    SetText,
-    SetValue,
-    SetAttribute,
-    RemoveAttribute,
-    AddClass,
-    RemoveClass,
-    SetWidth,
-    SetHeight,
-    SetZIndex,
-    SetBackground,
-    SetTranslate,
-    SetCursor,
-    ShowModal,
-    CloseModal,
-    Focus,
-    JsFn,
+// operation番号はJS側 (init.js の execute) のswitch分岐と対応。
+// 値を追加/変更する際は両方を揃えて更新する。
+pub enum Command {
+    SetText         { id: String, value: String },
+    SetValue        { id: String, value: String },
+    SetAttribute    { id: String, attribute: String, value: String },
+    RemoveAttribute { id: String, attribute: String },
+    AddClass        { id: String, value: String },
+    RemoveClass     { id: String, value: String },
+    SetWidth        { id: String, px: u32 },
+    SetHeight       { id: String, px: u32 },
+    SetZIndex       { id: String, z: i32 },
+    SetBackground   { id: String, value: String },
+    SetTranslate    { id: String, x: f64, y: f64 },
+    SetCursor       { id: String, value: String },
+    ShowModal       { id: String },
+    CloseModal      { id: String },
+    Focus           { id: String },
+    JsFn            { id: String, name: String },
 }
 
-impl Operation {
-    pub fn as_u8(&self) -> u8 {
+impl Serialize for Command {
+    // opは元のu8のまま保持し、フィールドと同じ階層にフラットに並べる
+    // (例: {"operation":11,"id":"...","x":1.0,"y":2.0})。
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
         match self {
-            Self::SetText         =>  1,
-            Self::SetValue        =>  2,
-            Self::SetAttribute    =>  3,
-            Self::RemoveAttribute =>  4,
-            Self::AddClass        =>  5,
-            Self::RemoveClass     =>  6,
-            Self::SetWidth        =>  7,
-            Self::SetHeight       =>  8,
-            Self::SetZIndex       =>  9,
-            Self::SetBackground   => 10,
-            Self::SetTranslate    => 11,
-            Self::SetCursor       => 12,
-            Self::ShowModal       => 13,
-            Self::CloseModal      => 14,
-            Self::Focus           => 15,
-            Self::JsFn            => 16,
+            Self::SetText { id, value } => {
+                map.serialize_entry("operation", &1u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::SetValue { id, value } => {
+                map.serialize_entry("operation", &2u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::SetAttribute { id, attribute, value } => {
+                map.serialize_entry("operation", &3u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("attribute", attribute)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::RemoveAttribute { id, attribute } => {
+                map.serialize_entry("operation", &4u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("attribute", attribute)?;
+            }
+            Self::AddClass { id, value } => {
+                map.serialize_entry("operation", &5u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::RemoveClass { id, value } => {
+                map.serialize_entry("operation", &6u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::SetWidth { id, px } => {
+                map.serialize_entry("operation", &7u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("px", px)?;
+            }
+            Self::SetHeight { id, px } => {
+                map.serialize_entry("operation", &8u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("px", px)?;
+            }
+            Self::SetZIndex { id, z } => {
+                map.serialize_entry("operation", &9u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("z", z)?;
+            }
+            Self::SetBackground { id, value } => {
+                map.serialize_entry("operation", &10u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::SetTranslate { id, x, y } => {
+                map.serialize_entry("operation", &11u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("x", x)?;
+                map.serialize_entry("y", y)?;
+            }
+            Self::SetCursor { id, value } => {
+                map.serialize_entry("operation", &12u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("value", value)?;
+            }
+            Self::ShowModal { id } => {
+                map.serialize_entry("operation", &13u8)?;
+                map.serialize_entry("id", id)?;
+            }
+            Self::CloseModal { id } => {
+                map.serialize_entry("operation", &14u8)?;
+                map.serialize_entry("id", id)?;
+            }
+            Self::Focus { id } => {
+                map.serialize_entry("operation", &15u8)?;
+                map.serialize_entry("id", id)?;
+            }
+            Self::JsFn { id, name } => {
+                map.serialize_entry("operation", &16u8)?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("name", name)?;
+            }
         }
-    }
-}
-
-#[derive(Serialize)]
-pub struct Command {
-    operation: u8,
-    id:        String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    attribute: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value:     Option<String>,
-}
-
-impl Command {
-    pub fn new(operation: Operation, id: &str, attribute: Option<&str>, value: Option<&str>) -> Self {
-        Self {
-            operation: operation.as_u8(),
-            id:        id.to_string(),
-            attribute: attribute.map(str::to_string),
-            value:     value.map(str::to_string),
-        }
+        map.end()
     }
 }
 
@@ -88,6 +136,21 @@ pub fn get_js_u32(obj: &JsValue, key: &str) -> u32 {
         .and_then(|f| {
             if f >= 0.0 && f <= u32::MAX as f64 && f.fract() == 0.0 {
                 Some(f as u32)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+/// js由来の整数をi32として取得
+pub fn get_js_i32(obj: &JsValue, key: &str) -> i32 {
+    Reflect::get(obj, &JsValue::from_str(key))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .and_then(|f| {
+            if f >= i32::MIN as f64 && f <= i32::MAX as f64 && f.fract() == 0.0 {
+                Some(f as i32)
             } else {
                 None
             }
@@ -316,6 +379,9 @@ pub fn detect_gesture(state: &mut PointerState, prev_state: &PointerState, event
 // dom::Id::decode()  -> Vec<dom::Segment> のパース
 
 pub mod dom {
+    use core::{option::Option::{self, Some, None}, result::Result::Ok, cmp::PartialEq, clone::Clone};
+    use alloc::{vec::Vec, string::String, format};
+
     #[derive(Debug, Clone, PartialEq)]
     pub enum Tag {
         Head,
@@ -330,8 +396,8 @@ pub mod dom {
         Ol,
         P,
         Textarea,
-        Drawer,   // <dialog id="drawer">
-        Modal,    // <dialog id="modal">, <dialog id="main_modal">
+        Drawer, // <dialog id="*drawer*">
+        Modal,  // <dialog id="*modal*">
         Form,
         Input,
         Fieldset,
@@ -487,7 +553,7 @@ pub struct CanvasEvent {
     pub x:                      f64,
     pub y:                      f64,
     pub time:                   f64,
-    pub section_origin_x:       f64, // resizeイベント時のみ有効: #sectionのviewport上origin
+    pub section_origin_x:       f64,
     pub section_origin_y:       f64,
 }
 
