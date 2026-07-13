@@ -16,6 +16,7 @@ Region operations on rectilinear grids with arbitrary unit systems.
 | Version | Status    | Date       | Description |
 |---------|-----------|------------|-------------|
 | 0.1.0   | Released  | 2026-07-10 | 1st release |
+| 0.1.1   | Released  | 2026-07-13 | improve performance(#7) |
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
