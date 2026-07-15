@@ -1,6 +1,6 @@
 # Contrinbuting
 
-## Common Rule
+- Follow [ORG_CONTRIBUTING.md](./ORG_CONTRIBUTING.md)
 
 If "ORG_CONTRIBUTING.md" does not exist in the repository root of your working environment, download it by executing the following.
 
