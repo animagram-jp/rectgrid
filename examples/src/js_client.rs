@@ -384,6 +384,7 @@ pub mod dom {
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Tag {
+        Body,
         Head,
         Header,
         H1, H2, H3,
@@ -411,6 +412,7 @@ pub mod dom {
     impl Tag {
         pub fn decode(s: &str) -> Self {
             match s {
+                "body"     => Self::Body,
                 "head"     => Self::Head,
                 "header"   => Self::Header,
                 "h1"       => Self::H1,
@@ -449,6 +451,7 @@ pub mod dom {
 
         pub fn encode(&self) -> &'static str {
             match self {
+                Self::Body     => "body",
                 Self::Head     => "head",
                 Self::Header   => "header",
                 Self::H1       => "h1",

@@ -65,7 +65,12 @@ impl Handler {
     pub fn close(&self) {}
 
     pub fn initial_draw(&mut self) -> (Vec<Event>, Vec<Command>) {
-        let mut cmds: Vec<Command> = Vec::new();
+        let mut cmds: Vec<Command> = vec![
+            Command::RemoveAttribute {
+                id:        Id::new(&[(Tag::Body, None)]).encode(),
+                attribute: "hidden".to_string(),
+            },
+        ];
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
         let resolved = self.rectgrid.box_as_px(&boxes);
         for (z, ((n, bx), px_result)) in self.articles.iter().zip(resolved).enumerate() {
