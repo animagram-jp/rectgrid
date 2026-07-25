@@ -1,3 +1,14 @@
+html {
+    overflow-x: hidden;
+}
+
+body {
+    height: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    font-size: 16px;
+}
+
 #header_hgroup {
     display: flex;
     align-items: flex-end;
@@ -29,15 +40,13 @@
     cursor: grab;
     user-select: none;
     padding: 1rem;
-    border: 1px solid #ccc;
+    border: 1px solid rgb(var(--rgb-ink));
     border-radius: 0.5rem;
-    background: #fff;
     box-shadow: var(--elevation-2);
 }
 
 #section > article:active {
     cursor: grabbing;
-    box-shadow: var(--elevation-5);
 }
 
 #section_article-3,

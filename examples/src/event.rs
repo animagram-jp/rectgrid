@@ -259,10 +259,10 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
     let x_unit = section_width_px / X_COLS as f64;
     let y_unit_rem = Y_UNIT_REM;
     // vertical lines every x_unit px, horizontal lines every y_unit_rem rem
-    // 線色: rgba(0,0,0,0.08) の1px線
+    // 線色: rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) の1px線（ダークモード追従）
     let bg = format!(
-        "repeating-linear-gradient(to right, rgba(0,0,0,0.08) 0px, rgba(0,0,0,0.08) 1px, transparent 1px, transparent {x_unit:.2}px), \
-         repeating-linear-gradient(to bottom, rgba(0,0,0,0.08) 0px, rgba(0,0,0,0.08) 1px, transparent 1px, transparent {y_unit_rem}rem)"
+        "repeating-linear-gradient(to right, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {x_unit:.2}px), \
+         repeating-linear-gradient(to bottom, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {y_unit_rem}rem)"
     );
     let section = Id::new(&[(Tag::Section, None)]);
     Command::SetBackground { id: section.encode(), value: bg }
