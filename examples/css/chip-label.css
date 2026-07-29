@@ -1,5 +1,5 @@
 .css-chip-label {
-  display: inline-flex;
+  display: inline flex;
   vertical-align: middle;
   grid-template-columns: auto auto;
   align-items: baseline;

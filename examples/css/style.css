@@ -16,7 +16,7 @@ body {
 }
 
 #header_hgroup>* {
-    display: inline-flex;
+    display: inline flex;
 }
 
 #header_hgroup>p {
