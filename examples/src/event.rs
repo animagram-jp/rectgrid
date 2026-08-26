@@ -47,10 +47,10 @@ impl Handler {
         let y_unit = Y_UNIT_REM * REM_PX;
         Self {
             articles:     alloc::vec![
-                              (1, BBox { base: [Unit::new(0.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
-                              (2, BBox { base: [Unit::new(1.0), Unit::new(0.0)], offset: [Unit::new(0.0), Unit::new(0.0)] }),
-                              (3, BBox { base: [Unit::new(2.0), Unit::new(0.0)], offset: [Unit::new(2.0), Unit::new(3.0)] }),
-                              (4, BBox { base: [Unit::new(2.0), Unit::new(3.0)], offset: [Unit::new(2.0), Unit::new(3.0)] }),
+                              (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)]).unwrap()),
+                              (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)]).unwrap()),
+                              (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)]).unwrap()),
+                              (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)]).unwrap()),
                           ],
             drag_target:  None,
             drag_corner:  None,
@@ -114,7 +114,7 @@ impl Handler {
                 if let Some(idx) = target {
                     if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == idx) {
                         if self.drag_corner.is_none() {
-                            let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
+                            let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0)));
                             let offset = self.rectgrid.offset(point, base_px);
                             pointer_state.drag_offset = (offset[0].get(), offset[1].get());
                         }
@@ -158,9 +158,9 @@ impl Handler {
                             return (vec![], vec![]);
                         };
                         *bx = new_bx;
-                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
+                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
                         let size_px: [Px; 2] = from_fn(|d| {
-                            self.rectgrid.unit_to_px(d, &(new_bx.base[d] + new_bx.offset[d])).unwrap_or(Px::new(0.0)) - base_px[d]
+                            self.rectgrid.unit_to_px(d, &(new_bx.base()[d] + new_bx.offset()[d])).unwrap_or(Px::new(0.0)) - base_px[d]
                         });
                         let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                         let mut cmds = vec![translate_card(idx, base_px[0].get(), base_px[1].get())];
@@ -194,7 +194,7 @@ impl Handler {
                                 // 移動ドラッグ: base を Unit格子にスナップ
                                 if let Ok(new_bx) = snap_region_to_unit(&self.rectgrid, drag_pointer, drag_offset, bx, Some([Unit::new(0.25), Unit::new(0.25)])) {
                                     *bx = new_bx;
-                                    let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
+                                    let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
                                     cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
                                 }
                             }
@@ -203,7 +203,7 @@ impl Handler {
                             // 点BBox: drag_pointerからUnit格子にスナップ
                             if let Ok(new_bx) = snap_point_to_unit(&self.rectgrid, drag_pointer, drag_offset, [Unit::new(0.25), Unit::new(0.25)]) {
                                 *bx = new_bx;
-                                let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base[d]).unwrap_or(Px::new(0.0)));
+                                let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
                                 cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
                             }
                         }

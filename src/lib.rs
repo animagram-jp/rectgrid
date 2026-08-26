@@ -12,6 +12,7 @@ pub use rectgrid::*;
 pub enum RectgridError {
     OutOfIndex(u32),
     InvalidDefinition,
+    NegativeOffset,
 }
 
 impl Display for RectgridError {
@@ -19,6 +20,7 @@ impl Display for RectgridError {
         match self {
             RectgridError::OutOfIndex(last) => write!(f, "out of index: last valid index is {}", last),
             RectgridError::InvalidDefinition => write!(f, "invalid definition"),
+            RectgridError::NegativeOffset => write!(f, "negative offset: every axis of offset must be >= 0"),
         }
     }
 }
