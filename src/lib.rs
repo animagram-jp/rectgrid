@@ -5,6 +5,7 @@ extern crate alloc;
 use core::fmt::{Display, Formatter, Result};
 
 mod rectgrid;
+pub mod geometry;
 pub use rectgrid::*;
 
 #[derive(Debug, Clone, Copy)]
