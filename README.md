@@ -54,14 +54,13 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `Unit` | - | - | - | `Value<UnitTag>` |
 | `Parameter` | - | - | - | `Value<ParameterTag>` |
 | `Point<D>` | - | - | - | `[Unit; D]` |
-| `BBox<D>` | `new` | `base: Point<D>, offset: Point<D>` | `Result<Self, RectgridError>` | Constructs a BBox. Returns NegativeOffset if any axis of offset is negative |
+| `BBox<D>` | `new` | `base: Point<D>, offset: Point<D>` | `Self` | Constructs a BBox. A negative offset axis is normalized by advancing base to the far corner and negating offset, so offset is always non-negative |
 |           | `base` | - | `Point<D>` | Start point |
 |           | `offset` | - | `Point<D>` | Vector distance to the end point (each axis is guaranteed non-negative) |
 |           | `snap_floor` | `extend: Option<[Unit; D]>` | `&mut Self` | Snaps base/offset to the integer grid via floor. extend applies to base only, added before flooring |
 |           | `has_size` | - | `bool` | Whether offset is nonzero on every axis (i.e., the BBox has area/volume) |
 | `RectgridError` | `OutOfIndex` | `u32` | - | Out-of-range access. The last valid index within range |
 |                 | `InvalidDefinition` | - | - | The definition is invalid and an evaluation closure cannot be built |
-|                 | `NegativeOffset` | - | - | `BBox::new` was given a negative offset on some axis |
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
 |                     | `VectorList` | `Vec<Px>` | - | An empty `Vec<Px>` is invalid |
 |                     | `Scale` | `f64` | - | - |
@@ -124,14 +123,13 @@ cd examples && wasm-pack build --target web --out-dir app --out-name app
 | `Unit` | - | - | - | `Value<UnitTag>` |
 | `Parameter` | - | - | - | `Value<ParameterTag>` |
 | `Point<D>` | - | - | - | `[Unit; D]` |
-| `BBox<D>` | `new` | `base: Point<D>, offset: Point<D>` | `Result<Self, RectgridError>` | BBoxを構築する。offsetのいずれかの軸が負の場合はNegativeOffsetを返す |
+| `BBox<D>` | `new` | `base: Point<D>, offset: Point<D>` | `Self` | BBoxを構築する。offsetのいずれかの軸が負の場合はbaseをその軸の終点側へ進め、offsetを反転して非負に正規化する |
 |           | `base` | - | `Point<D>` | 始点 |
 |           | `offset` | - | `Point<D>` | 終点までのベクトル距離(各軸は非負であることが保証される) |
 |           | `snap_floor` | `extend: Option<[Unit; D]>` | `&mut Self` | base/offsetをfloor整数格子にスナップ。extendはbaseにのみfloor前に加算 |
 |           | `has_size` | - | `bool` | 全軸のoffsetが非ゼロか(面積/体積を持つBBoxか) |
 | `RectgridError` | `OutOfIndex` | `u32` | - | 範囲外アクセス。範囲内に収まる最後の有効index |
 |                 | `InvalidDefinition` | - | - | 定義が不正で評価クロージャを構築できない |
-|                 | `NegativeOffset` | - | - | `BBox::new`にいずれかの軸が負のoffsetが渡された |
 | `IncrementFunction` | `ForwardDifference` | `Rc<dyn Fn(u32) -> Result<Px, RectgridError>>` | - | - |
 |                     | `VectorList` | `Vec<Px>` | - | 空のVec<Px>は不正 |
 |                     | `Scale` | `f64` | - | - |

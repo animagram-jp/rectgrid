@@ -47,10 +47,10 @@ impl Handler {
         let y_unit = Y_UNIT_REM * REM_PX;
         Self {
             articles:     alloc::vec![
-                              (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)]).unwrap()),
-                              (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)]).unwrap()),
-                              (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)]).unwrap()),
-                              (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)]).unwrap()),
+                              (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
+                              (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
+                              (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)])),
+                              (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)])),
                           ],
             drag_target:  None,
             drag_corner:  None,

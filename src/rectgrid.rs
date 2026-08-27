@@ -1,5 +1,15 @@
-use core::{primitive::{u32, usize, f64}, result::Result, array::from_fn, marker::PhantomData, ops::{Add, AddAssign, Sub, Mul, Div}};
-use alloc::{vec::Vec, boxed::Box, rc::Rc};
+use core::{
+    primitive::{u32, usize, f64},
+    result::Result,
+    array::from_fn,
+    marker::PhantomData,
+    ops::{Add, AddAssign, Sub, Mul, Div}
+};
+use alloc::{
+    vec::Vec,
+    boxed::Box,
+    rc::Rc
+};
 
 use crate::RectgridError;
 
@@ -87,24 +97,31 @@ pub struct BBox<const D: usize> {
 
 impl<const D: usize> BBox<D> {
     /// Constructs a BBox. offset represents the side length (width/height/...) from base toward the
-    /// far corner and is required to be non-negative on every axis; a negative axis returns
-    /// RectgridError::NegativeOffset instead of constructing a BBox that downstream hit-testing/parameter
-    /// computations cannot interpret correctly.
+    /// far corner. Hit-testing/parameter computations require offset to be non-negative on every axis,
+    /// so a negative axis is normalized by swapping that axis's corner: base is advanced to the far
+    /// corner and offset is negated back to non-negative. This makes the far corner reachable via drag
+    /// (e.g. dragging past the near corner) infallible; base itself is left as-is, negative or not.
     ///
     /// ```
-    /// use rectgrid::{BBox, Unit, RectgridError};
-    /// let bx = BBox::new([Unit::new(0.0); 2], [Unit::new(1.0), Unit::new(3.0)]).unwrap();
+    /// use rectgrid::{BBox, Unit};
+    /// let bx = BBox::new([Unit::new(0.0); 2], [Unit::new(1.0), Unit::new(3.0)]);
     /// assert!(bx.has_size());
-    /// assert!(matches!(
-    ///     BBox::new([Unit::new(0.0); 2], [Unit::new(-1.0), Unit::new(3.0)]),
-    ///     Err(RectgridError::NegativeOffset),
-    /// ));
+    ///
+    /// // a negative offset flips the corner instead of failing
+    /// let flipped = BBox::new([Unit::new(0.0); 2], [Unit::new(-1.0), Unit::new(3.0)]);
+    /// assert_eq!(flipped.base()[0].get(), -1.0);
+    /// assert_eq!(flipped.offset()[0].get(), 1.0);
     /// ```
-    pub fn new(base: Point<D>, offset: Point<D>) -> Result<Self, RectgridError> {
-        if offset.iter().any(|u| u.get() < 0.0) {
-            return Err(RectgridError::NegativeOffset);
+    pub fn new(base: Point<D>, offset: Point<D>) -> Self {
+        let mut base = base;
+        let mut offset = offset;
+        for d in 0..D {
+            if offset[d].get() < 0.0 {
+                base[d] += offset[d];
+                offset[d] = Unit::new(-offset[d].get());
+            }
         }
-        Ok(Self { base, offset })
+        Self { base, offset }
     }
 
     /// Returns base (the near corner).
@@ -125,7 +142,7 @@ impl<const D: usize> BBox<D> {
     /// let mut bx = BBox::new(
     ///     [Unit::new(2.6), Unit::new(0.6)],
     ///     [Unit::new(1.9), Unit::new(3.0)],
-    /// ).unwrap();
+    /// );
     /// bx.snap_floor(Some([Unit::new(-0.5), Unit::new(-0.5)]));
     /// assert_eq!(bx.base()[0].get(), 2.0);
     /// assert_eq!(bx.base()[1].get(), 0.0);
@@ -148,11 +165,11 @@ impl<const D: usize> BBox<D> {
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
-    /// let area = BBox::new([Unit::new(0.0); 2], [Unit::new(1.0), Unit::new(3.0)]).unwrap();
+    /// let area = BBox::new([Unit::new(0.0); 2], [Unit::new(1.0), Unit::new(3.0)]);
     /// assert!(area.has_size());
-    /// let segment = BBox::new([Unit::new(0.0); 2], [Unit::new(0.0), Unit::new(3.0)]).unwrap();
+    /// let segment = BBox::new([Unit::new(0.0); 2], [Unit::new(0.0), Unit::new(3.0)]);
     /// assert!(!segment.has_size());
-    /// let point = BBox::new([Unit::new(0.0); 2], [Unit::new(0.0); 2]).unwrap();
+    /// let point = BBox::new([Unit::new(0.0); 2], [Unit::new(0.0); 2]);
     /// assert!(!point.has_size());
     /// ```
     pub fn has_size(&self) -> bool {
@@ -476,8 +493,8 @@ impl<const D: usize> RectGrid<D> {
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
     /// let boxes = alloc::vec![
-    ///     BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap(),
-    ///     BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap(),
+    ///     BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]),
+    ///     BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]),
     /// ];
     /// assert_eq!(grid.hit_test([Px::new(450.0), Px::new(10.0)], &boxes, None), Some(1));
     /// assert_eq!(grid.hit_test([Px::new(-100.0), Px::new(-100.0)], &boxes, None), None);
@@ -499,7 +516,7 @@ impl<const D: usize> RectGrid<D> {
     ///     [Px::new(0.0), Px::new(0.0)],
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
-    /// let boxes = alloc::vec![BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap()];
+    /// let boxes = alloc::vec![BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)])];
     /// let (i, parameter) = grid.hit_test_with_parameter([Px::new(100.0), Px::new(32.0)], &boxes, None).unwrap();
     /// assert_eq!(i, 0);
     /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
@@ -526,8 +543,8 @@ impl<const D: usize> RectGrid<D> {
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
     /// let boxes = alloc::vec![
-    ///     BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap(),
-    ///     BBox::new([Unit::new(0.5), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap(),
+    ///     BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]),
+    ///     BBox::new([Unit::new(0.5), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]),
     /// ];
     /// assert_eq!(grid.hit_tests([Px::new(150.0), Px::new(10.0)], &boxes, None), alloc::vec![true, true]);
     /// ```
@@ -547,7 +564,7 @@ impl<const D: usize> RectGrid<D> {
     ///     [Px::new(0.0), Px::new(0.0)],
     ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
     /// ).unwrap();
-    /// let bx = BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap();
+    /// let bx = BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
     /// let parameter = grid.get_parameter([Px::new(300.0), Px::new(16.0)], bx);
     /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
     /// assert!((parameter[1].get() - 0.25).abs() < 1e-9);
@@ -570,7 +587,7 @@ impl<const D: usize> RectGrid<D> {
     /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
     /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(100.0)]).unwrap();
-    /// let boxes = alloc::vec![BBox::new([Unit::new(1.0)], [Unit::new(2.0)]).unwrap()];
+    /// let boxes = alloc::vec![BBox::new([Unit::new(1.0)], [Unit::new(2.0)])];
     /// let result = grid.box_as_px(&boxes);
     /// let (base_px, offset_px) = result[0].as_ref().unwrap();
     /// assert_eq!(base_px[0].get(), 100.0);
@@ -632,7 +649,7 @@ impl<const D: usize> RectGrid<D> {
 ///     [Px::new(0.0), Px::new(0.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
-/// let bx = BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(3.0)]).unwrap();
+/// let bx = BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(3.0)]);
 /// // clicking near bx's top-left corner (400, 0)px -> corner on the base side for both axes
 /// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1);
 /// assert_eq!(corner, Some([Some(true), Some(true)]));
@@ -678,7 +695,7 @@ pub fn corner_test<const D: usize>(
 ///     [Px::new(0.0), Px::new(0.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
-/// let bx = BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(3.0)]).unwrap();
+/// let bx = BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(3.0)]);
 /// // dragging the top-left (base-side) corner to (150, 0)px -> the x axis's base shrinks to 0 unit
 /// let resized = drag_resize(&grid, [Px::new(150.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
 /// assert_eq!(resized.base()[0].get(), 0.0);
@@ -742,7 +759,7 @@ pub fn drag_translate<const D: usize>(
 ///     [Px::new(0.0), Px::new(0.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
-/// let bx = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]).unwrap();
+/// let bx = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
 /// let snapped = snap_region_to_unit(
 ///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], &bx,
 ///     Some([Unit::new(0.25), Unit::new(0.25)]),
@@ -877,9 +894,14 @@ mod tests {
     }
 
     #[test]
-    fn bbox_new_rejects_negative_offset() {
-        assert!(matches!(BBox::new([Unit::new(0.0)], [Unit::new(-1.0)]), Err(RectgridError::NegativeOffset)));
-        assert!(BBox::new([Unit::new(0.0)], [Unit::new(0.0)]).is_ok());
+    fn bbox_new_normalizes_negative_offset() {
+        let bx = BBox::new([Unit::new(0.0)], [Unit::new(-1.0)]);
+        assert_eq!(bx.base()[0].get(), -1.0);
+        assert_eq!(bx.offset()[0].get(), 1.0);
+
+        let bx = BBox::new([Unit::new(0.0)], [Unit::new(0.0)]);
+        assert_eq!(bx.base()[0].get(), 0.0);
+        assert_eq!(bx.offset()[0].get(), 0.0);
     }
 
     #[test]
