@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
-use crate::js_client::{Command, EventType, detect_device, PointerState, detect_gesture, CanvasEvent};
+use crate::js_client::{Command, EventType, detect_device, PointerState, Thresholds, detect_gesture, CanvasEvent};
 use crate::event::{Handler, Event};
 
 // ============================================================
@@ -12,6 +12,7 @@ use crate::event::{Handler, Event};
 #[wasm_bindgen]
 pub struct App {
     pointer_state: PointerState,
+    thresholds:    Thresholds,
     events:        Vec<Event>,
     handler:       Handler,
 }
@@ -19,10 +20,9 @@ pub struct App {
 #[wasm_bindgen]
 impl App {
     pub fn init(pointer_coarse: bool, viewport_width_px: f64, _viewport_height_px: f64, section_origin_x: f64, section_origin_y: f64) -> App {
-        detect_device(pointer_coarse);
-
         let mut app = App {
             pointer_state: PointerState::default(),
+            thresholds:    Thresholds::for_device(detect_device(pointer_coarse)),
             events:        Vec::new(),
             handler:       Handler::new(viewport_width_px, [section_origin_x, section_origin_y]),
         };
@@ -43,7 +43,7 @@ impl App {
             &canvas_event.event_type,
             canvas_event.x, canvas_event.y, canvas_event.time,
         );
-        match detect_gesture(&mut self.pointer_state, &prev_state, &canvas_event.event_type, canvas_event.time) {
+        match detect_gesture(&mut self.pointer_state, &prev_state, &canvas_event.event_type, canvas_event.time, &self.thresholds) {
             Some(gesture) => self.events.push(Event::Gesture(gesture)),
             None => match &canvas_event.event_type {
                 EventType::PointerDown => self.events.push(Event::Canvas(canvas_event)),
