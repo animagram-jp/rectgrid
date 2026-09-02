@@ -251,6 +251,7 @@ impl KeyName {
 // device
 // ============================================================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Device {
     Touch,
     Mouse,
@@ -262,34 +263,122 @@ pub fn detect_device(pointer_coarse: bool) -> Device {
 }
 
 // ============================================================
-// gesture: long press, swipe (up,down,left,right), drag
+// gesture: tap, long press, swipe (up,down,left,right), drag
 // ============================================================
+//
+// 判定の根拠(閾値の出典・velocity計算窓・LongPressのタイマーレス実装など)は
+// app repository の reference/Gesture.md を参照。ここでの実装はその
+// Thresholds / PointerState / detect_gesture (+ detect_on_release /
+// detect_on_move) を単一ポインタ版としてそのまま移植したもの。app repository
+// はこれを複数指対応の TouchTracker で包んでいるが、rectgrid の examples は
+// 単一ポインタで十分なため TouchTracker 自体は移植していない。
 
+/// ジェスチャ判定の閾値。すべて CSS px と ms。
+///
+/// 装置ごとに閾値を分ける。指の接触面はマウスカーソルより広く、押下中の
+/// 座標のブレも大きいため、タッチでは許容を広げる。
+#[derive(Debug, Clone, Copy)]
+pub struct Thresholds {
+    /// 長押しと見なす最短時間 (ms)。
+    pub long_press_ms:      f64,
+    /// 長押し中に許容する座標のブレ (px)。これを超えたら長押しを取り消す。
+    pub long_press_slop_px: f64,
+    /// ドラッグ開始と見なす移動距離 (px)。
+    pub drag_start_px:      f64,
+    /// スワイプと見なす最短距離 (px)。
+    pub swipe_min_px:       f64,
+    /// スワイプと見なす最低速度 (px/ms)。
+    pub swipe_min_velocity: f64,
+    /// スワイプと見なす最長時間 (ms)。これを超えたらドラッグ扱い。
+    pub swipe_max_ms:       f64,
+    /// タップと見なす最長時間 (ms)。
+    pub tap_max_ms:         f64,
+    /// タップ中に許容する座標のブレ (px)。
+    pub tap_slop_px:        f64,
+}
+
+impl Thresholds {
+    pub const MOUSE: Self = Self {
+        long_press_ms:      251.0,
+        long_press_slop_px: 9.0,
+        drag_start_px:      10.0,
+        swipe_min_px:       50.0,
+        swipe_min_velocity: 0.5,
+        swipe_max_ms:       250.0,
+        tap_max_ms:         250.0,
+        tap_slop_px:        9.0,
+    };
+
+    /// タッチ向けの既定値。ブレ許容と開始距離をマウスより広く取る。
+    pub const TOUCH: Self = Self {
+        long_press_ms:      500.0,
+        long_press_slop_px: 16.0,
+        drag_start_px:      16.0,
+        swipe_min_px:       50.0,
+        swipe_min_velocity: 0.5,
+        swipe_max_ms:       300.0,
+        tap_max_ms:         300.0,
+        tap_slop_px:        16.0,
+    };
+
+    #[must_use]
+    pub const fn for_device(device: Device) -> Self {
+        match device {
+            Device::Mouse => Self::MOUSE,
+            Device::Touch => Self::TOUCH,
+        }
+    }
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self::MOUSE
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Gesture {
+    /// 単純なタップ / クリック。
+    Tap,
+    /// 長押し。押下したまま long_press_ms を超えた時点で1度だけ発火する。
+    /// 動かさずに保持した場合、実際の発火は次の PointerMove / PointerUp
+    /// まで遅延する ([`detect_gesture`] の doc を参照)。
     LongPress,
     SwipeUp,
     SwipeDown,
     SwipeLeft,
     SwipeRight,
     Drag { x: f64, y: f64 },
+    /// ドラッグ終了 (pointerup)。スナップ処理はここで行う。
     DragEnd,
+    /// ドラッグ中断 (pointercancel)。DragEndと同一視すると割り込み時に
+    /// ドロップを取り消せなくなるため区別する。
+    DragCancel,
 }
 
-// pointerdown:   is_down = true, 座標・時刻記録, タイマー起動
-// pointermove:   座標がブレていたら長押しキャンセル (指がズレた)
-// pointerup:     経過時間で click か 長押し か判定
-// pointercancel: 全部リセット (割り込まれた時)
+/// PointerCancel でも座標・時刻・drag_offset / drag_px を保持し、is_down と
+/// is_dragging のフラグだけを倒す。判定は detect_gesture がこの直後に
+/// 行うため、そこで必要な値を判定前に消さない。
 #[derive(Default, Clone, Copy)]
 pub struct PointerState {
-    is_down:    bool,   // default: false
-    start_x:    f64,    // default: 0.0
-    start_y:    f64,    // default: 0.0
-    current_x:  f64,    // default: 0.0
-    current_y:  f64,    // default: 0.0
-    start_time: f64,    // default: 0.0
+    is_down:    bool,
+    start_x:    f64,
+    start_y:    f64,
+    current_x:  f64,
+    current_y:  f64,
+    start_time: f64,
+    /// 直近の PointerMove の座標・時刻 (無ければ PointerDown のそれ)。
+    /// swipe の速度を「離す直前の実際の動き」から計算するために持つ。
+    last_move_x:    f64,
+    last_move_y:    f64,
+    last_move_time: f64,
     pub drag_offset: (f64, f64), // PointerDown時の (pointer_px - カード左上px)
     pub drag_px:     (f64, f64), // Drag中のカード左上px座標(一時)
-    is_dragging: bool,           // Dragジェスチャが1回以上発火した
+    is_dragging:      bool, // Dragジェスチャが1回以上発火した
+    /// 長押しを発火済みか。連続発火を防ぐラッチ。
+    long_press_fired: bool,
+    /// 直前の終了が PointerCancel だったか。
+    cancelled:        bool,
 }
 
 impl PointerState {
@@ -297,73 +386,202 @@ impl PointerState {
     pub fn update(self, event_type: &EventType, x: f64, y: f64, time: f64) -> Self {
         match event_type {
             EventType::PointerDown => Self {
-                is_down:     true,
-                start_x:     x,
-                start_y:     y,
-                current_x:   x,
-                current_y:   y,
-                start_time:  time,
-                drag_offset: (0.0, 0.0),
-                drag_px:     (0.0, 0.0),
-                is_dragging: false,
+                is_down:          true,
+                start_x:          x,
+                start_y:          y,
+                current_x:        x,
+                current_y:        y,
+                start_time:       time,
+                last_move_x:      x,
+                last_move_y:      y,
+                last_move_time:   time,
+                drag_offset:      (0.0, 0.0),
+                drag_px:          (0.0, 0.0),
+                is_dragging:      false,
+                long_press_fired: false,
+                cancelled:        false,
             },
             EventType::PointerMove => Self {
-                current_x: x,
-                current_y: y,
+                current_x:      x,
+                current_y:      y,
+                last_move_x:    x,
+                last_move_y:    y,
+                last_move_time: time,
                 ..self
             },
-            EventType::PointerUp | EventType::PointerCancel => Self {
-                is_down:     false,
-                start_x:     0.0,
-                start_y:     0.0,
-                current_x:   0.0,
-                current_y:   0.0,
-                start_time:  0.0,
-                is_dragging: false,
-                ..self
+            EventType::PointerUp => Self {
+                is_down: false, current_x: x, current_y: y, cancelled: false, ..self
+            },
+            EventType::PointerCancel => Self {
+                is_down: false, current_x: x, current_y: y, cancelled: true, ..self
             },
             _ => self,
         }
     }
+
+    /// 押下開始からの移動距離 (px)。
+    fn distance(&self) -> f64 {
+        let dx = self.current_x - self.start_x;
+        let dy = self.current_y - self.start_y;
+        (dx * dx + dy * dy).sqrt()
+    }
 }
 
-pub fn detect_gesture(state: &mut PointerState, prev_state: &PointerState, event_type: &EventType, current_time: f64) -> Option<Gesture> {
-    if !state.is_down {
-        if prev_state.is_dragging {
-            return Some(Gesture::DragEnd);
+/// pointer 状態の遷移からジェスチャを認識する。
+///
+/// is_down == false でも、PointerUp / PointerCancel なら終了時ジェスチャ
+/// (DragEnd / DragCancel / Swipe* / Tap / LongPress) の判定へ進む。
+///
+/// # 判定順
+///
+/// 1. 終了イベント (PointerUp / PointerCancel)
+///    - ドラッグ中なら DragEnd / DragCancel
+///    - 速い + 遠い + 短い なら Swipe*
+///    - 長押し発火済みなら何も返さない (発火済みのため)
+///    - 保持時間超過 + ブレ小 なら LongPress (動かないまま離した場合)
+///    - 短い + ブレ小 なら Tap
+/// 2. 移動イベント (PointerMove)
+///    - 保持時間超過 + ブレ小 かつ未発火なら LongPress
+///      (動かないまま保持時間を超え、その後わずかに動いた場合)
+///    - 既にドラッグ中、または swipe 条件を満たさない移動なら Drag
+///
+/// LongPress はタイマーを持たない。動かないまま保持され続けた場合は
+/// 次の PointerMove / PointerUp まで発火が遅延する。
+pub fn detect_gesture(
+    state: &mut PointerState,
+    prev_state: &PointerState,
+    event_type: &EventType,
+    current_time: f64,
+    thresholds: &Thresholds,
+) -> Option<Gesture> {
+    match event_type {
+        EventType::PointerUp | EventType::PointerCancel => {
+            detect_on_release(state, prev_state, current_time, thresholds)
         }
+        EventType::PointerMove => detect_on_move(state, current_time, thresholds),
+        _ => None,
+    }
+}
+
+/// 終了イベントの判定。
+fn detect_on_release(
+    state: &mut PointerState,
+    prev_state: &PointerState,
+    current_time: f64,
+    thresholds: &Thresholds,
+) -> Option<Gesture> {
+    // ドラッグしていたなら、終了種別を返して確定させる。
+    if prev_state.is_dragging {
+        state.is_dragging = false;
+        return Some(if state.cancelled { Gesture::DragCancel } else { Gesture::DragEnd });
+    }
+
+    // キャンセルはここで打ち切る。タップにもスワイプにもしない。
+    if state.cancelled {
         return None;
     }
 
-    let dx = state.current_x - state.start_x;
-    let dy = state.current_y - state.start_y;
     let dt = current_time - state.start_time;
-    let distance = (dx * dx + dy * dy).sqrt();
+    if dt <= 0.0 {
+        return None;
+    }
+    let distance = state.distance();
 
-    // long press: 時間長い + 座標ブレ小さい
-    if dt > 251.0 && distance < 9.0 {
+    // swipe: 速い + 遠い + 短い。
+    //
+    // 速度は start からの平均ではなく、直近の PointerMove から current
+    // までの区間で計算する。平均だと、序盤に大きく動いた後指を止めたまま
+    // 保持してから離した場合でも、距離が大きいままなので速度が閾値を超え
+    // 続け、実際には止まっていたのに swipe と誤判定されうる。直近区間で
+    // 計算すれば、動きが止まっていた分だけ move_dt が伸びて速度は自然に
+    // 下がる。PointerMove が一度も無ければ last_move_* は start と同じ
+    // なので、平均と一致する。
+    let move_dt = current_time - state.last_move_time;
+    let velocity = if move_dt > 0.0 {
+        let mdx = state.current_x - state.last_move_x;
+        let mdy = state.current_y - state.last_move_y;
+        (mdx * mdx + mdy * mdy).sqrt() / move_dt
+    } else {
+        0.0
+    };
+    if velocity > thresholds.swipe_min_velocity
+        && distance > thresholds.swipe_min_px
+        && dt < thresholds.swipe_max_ms
+    {
+        let dx = state.current_x - state.start_x;
+        let dy = state.current_y - state.start_y;
+        return Some(if dx.abs() > dy.abs() {
+            if dx > 0.0 { Gesture::SwipeRight } else { Gesture::SwipeLeft }
+        } else if dy > 0.0 {
+            Gesture::SwipeDown
+        } else {
+            Gesture::SwipeUp
+        });
+    }
+
+    // 長押しは detect_on_move で既に発火済み。ここで tap を重ねて返さない。
+    if state.long_press_fired {
+        return None;
+    }
+
+    // long press: 指を動かさないまま保持時間を超えて離した場合、
+    // PointerMove が一度も来ていないため detect_on_move 側では拾えて
+    // いない。ここが最後の判定機会になる。
+    if dt > thresholds.long_press_ms && distance < thresholds.long_press_slop_px {
         return Some(Gesture::LongPress);
     }
 
-    // swipe: PointerUp時のみ + velocity > 0.5 px/ms + duration < 250ms
-    if matches!(event_type, EventType::PointerUp) && dt > 0.0 {
-        let velocity = distance / dt;
-        if velocity > 0.5 && distance > 50.0 && dt < 250.0 {
-            return Some(if dx.abs() > dy.abs() {
-                if dx > 0.0 { Gesture::SwipeRight } else { Gesture::SwipeLeft }
-            } else {
-                if dy > 0.0 { Gesture::SwipeDown } else { Gesture::SwipeUp }
-            });
-        }
-    }
-
-    // drag: PointerMove中に距離が閾値超え → 差分を返す
-    if matches!(event_type, EventType::PointerMove) && distance > 10.0 {
-        state.is_dragging = true;
-        return Some(Gesture::Drag { x: state.current_x, y: state.current_y });
+    // tap: 短い + ブレ小。
+    if dt < thresholds.tap_max_ms && distance < thresholds.tap_slop_px {
+        return Some(Gesture::Tap);
     }
 
     None
+}
+
+/// 移動イベントの判定。
+fn detect_on_move(state: &mut PointerState, current_time: f64, thresholds: &Thresholds) -> Option<Gesture> {
+    if !state.is_down {
+        return None;
+    }
+
+    let distance = state.distance();
+
+    // long press: 動いていない状態で保持時間を超えたら、この PointerMove
+    // で確定させる。指を完全に静止させたままなら次の PointerUp で
+    // detect_on_release が拾う。
+    if !state.long_press_fired
+        && !state.is_dragging
+        && distance < thresholds.long_press_slop_px
+        && current_time - state.start_time > thresholds.long_press_ms
+    {
+        state.long_press_fired = true;
+        return Some(Gesture::LongPress);
+    }
+
+    if distance <= thresholds.drag_start_px {
+        return None;
+    }
+
+    // 既にドラッグ中なら継続する。
+    if state.is_dragging {
+        return Some(Gesture::Drag { x: state.current_x, y: state.current_y });
+    }
+
+    // まだドラッグに入っていない場合、swipe になりうる動きは譲る。
+    // (先に Drag へ倒すと後続の PointerUp で swipe が判定不能になる —
+    // 「drag が swipe を横取りする」バグの原因だった。)
+    let dt = current_time - state.start_time;
+    if dt > 0.0 && dt < thresholds.swipe_max_ms {
+        let velocity = distance / dt;
+        if velocity > thresholds.swipe_min_velocity && distance > thresholds.swipe_min_px {
+            // まだ確定させない。PointerUp で swipe か drag かを決める。
+            return None;
+        }
+    }
+
+    state.is_dragging = true;
+    Some(Gesture::Drag { x: state.current_x, y: state.current_y })
 }
 
 // ============================================================

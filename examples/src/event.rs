@@ -227,6 +227,36 @@ impl Handler {
                 self.drag_corner = None;
                 (vec![], cmds)
             }
+            Gesture::DragCancel => {
+                // pointercancelによる中断。DragEndと違いUnit格子へのスナップ
+                // やz-index再割り当ては行わない(何も完了していないため)。
+                // 角ハンドルドラッグはDrag中にbxを直接書き換えているため、
+                // その最後の状態へ視覚位置を合わせ直す(見た目のズレを防ぐ)。
+                // 移動ドラッグ・点BBoxはbx自体は未変更のため、これは実質
+                // ドラッグ開始前の位置への視覚的な巻き戻しになる。
+                let mut cmds = vec![];
+                if let Some(idx) = self.drag_target {
+                    if self.drag_corner.is_some() {
+                        let section = Id::new(&[(Tag::Section, None)]);
+                        cmds.push(Command::SetCursor { id: section.encode(), value: String::new() });
+                    }
+                    if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == idx) {
+                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0)));
+                        cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
+                        if bx.has_size() {
+                            let size_px: [Px; 2] = from_fn(|d| {
+                                self.rectgrid.unit_to_px(d, &(bx.base()[d] + bx.offset()[d])).unwrap_or(Px::new(0.0)) - base_px[d]
+                            });
+                            let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
+                            cmds.push(Command::SetWidth  { id: article.encode(), px: size_px[0].get() as u32 });
+                            cmds.push(Command::SetHeight { id: article.encode(), px: size_px[1].get() as u32 });
+                        }
+                    }
+                }
+                self.drag_target = None;
+                self.drag_corner = None;
+                (vec![], cmds)
+            }
             _ => (vec![], vec![]),
         }
     }
