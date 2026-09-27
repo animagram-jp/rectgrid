@@ -7,7 +7,7 @@ use rectgrid::{
 };
 
 use crate::js_client::{
-    Attribute, CanvasEvent, Command, CursorValue, EventType, Gesture, PointerState,
+    CanvasEvent, Command, CursorValue, EventType, Gesture, PointerState,
     dom::{Id, Tag},
 };
 
@@ -66,10 +66,7 @@ impl Handler {
     }
 
     pub fn initial_draw(&mut self) -> (Vec<Event>, Vec<Command>) {
-        let mut cmds: Vec<Command> = vec![Command::RemoveAttribute {
-            id:        Id::new(&[(Tag::Body, None)]),
-            attribute: Attribute::Hidden,
-        }];
+        let mut cmds: Vec<Command> = vec![];
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
         let resolved = self.rectgrid.box_as_px(&boxes);
         for (z, ((n, bx), px_result)) in self.articles.iter().zip(resolved).enumerate() {
@@ -106,13 +103,18 @@ impl Handler {
                 ));
                 const CORNER_THRESHOLD: f64 = 0.1;
                 let point = [Px::new(event.x), Px::new(event.y)];
+                crate::debug_log!(
+                    "event.x/y: {:?}, rectgrid.origin: {:?}",
+                    (event.x, event.y),
+                    (self.rectgrid.origin[0].get(), self.rectgrid.origin[1].get())
+                );
                 let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
                 let hit_i = self.rectgrid.hit_test(point, &boxes, extend);
                 let hit_n = hit_i.map(|i| self.articles[i].0);
                 self.drag_corner = None;
                 let corner: Option<[Option<bool>; 2]> = hit_i.and_then(|i| {
                     let (parameter, corner) =
-                        corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD);
+                        corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD, extend);
                     crate::debug_log!(
                         "rectgrid parameter: {:?}, corner: {:?}",
                         parameter.map(|r| r.map(|p| p.get())),

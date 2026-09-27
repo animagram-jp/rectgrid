@@ -680,7 +680,10 @@ impl<const D: usize> RectGrid<D> {
 /// Each element of the corner result: Some(true) = near the base-side edge ([0, threshold]), Some(false) = near the offset-side edge ([1-threshold, 1]), None = not applicable.
 /// If at least one axis is Some, it is treated as a handle hit (all axes Some = corner, only one axis Some = edge).
 /// If all axes are None, returns None to signal no handle (the caller should fall back to e.g. a move drag).
-/// parameter is None when the box lacks size (has_size is false) or point is outside bx.
+/// extend (in the same Unit space as hit_test's extend) is converted to a parameter-space margin per axis
+/// (extend / offset) and added to the inside range, so a point within hit_test's extended hit area is not
+/// spuriously rejected as outside bx.
+/// parameter is None when the box lacks size (has_size is false) or point is outside bx (extend included).
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
@@ -690,31 +693,45 @@ impl<const D: usize> RectGrid<D> {
 /// ).unwrap();
 /// let bx = BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(3.0)]);
 /// // clicking near bx's top-left corner (400, 0)px -> corner on the base side for both axes
-/// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1);
+/// let (_, corner) = corner_test(&grid, [Px::new(400.0), Px::new(0.0)], &bx, 0.1, None);
 /// assert_eq!(corner, Some([Some(true), Some(true)]));
 /// // clicking near the middle of bx's top edge (x center, y = base side) -> a y-only handle (edge drag)
-/// let (_, corner) = corner_test(&grid, [Px::new(500.0), Px::new(0.0)], &bx, 0.1);
+/// let (_, corner) = corner_test(&grid, [Px::new(500.0), Px::new(0.0)], &bx, 0.1, None);
 /// assert_eq!(corner, Some([None, Some(true)]));
 /// // near the center of bx matches neither edge nor corner, but parameter is still obtainable
-/// let (parameter, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1);
+/// let (parameter, corner) = corner_test(&grid, [Px::new(500.0), Px::new(96.0)], &bx, 0.1, None);
 /// assert!(parameter.is_some());
 /// assert_eq!(corner, None);
 /// // outside bx, parameter is also unobtainable
-/// let (parameter, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1);
+/// let (parameter, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-10.0)], &bx, 0.1, None);
 /// assert!(parameter.is_none());
 /// assert_eq!(corner, None);
+/// // just outside the base-side edge, but within extend -> still treated as a base-side handle
+/// let extend = Some(([Unit::new(-0.1), Unit::new(-0.1)], [Unit::new(0.1), Unit::new(0.1)]));
+/// let (parameter, corner) = corner_test(&grid, [Px::new(400.0), Px::new(-5.0)], &bx, 0.1, extend);
+/// assert!(parameter.is_some());
+/// assert_eq!(corner, Some([Some(true), Some(true)]));
 /// ```
 pub fn corner_test<const D: usize>(
     grid: &RectGrid<D>,
     point: [Px; D],
     bx: &BBox<D>,
     threshold: f64,
+    extend: Option<([Unit; D], [Unit; D])>,
 ) -> (Option<[Parameter; D]>, Option<[Option<bool>; D]>) {
     if !bx.has_size() {
         return (None, None);
     }
     let parameter = grid.get_parameter(point, *bx);
-    let inside = parameter.iter().all(|r| r.get() >= 0.0 && r.get() <= 1.0);
+    let margin: [(f64, f64); D] = from_fn(|d| match extend {
+        Some((eb, eo)) => {
+            let offset = bx.offset()[d].get();
+            if offset == 0.0 { (0.0, 0.0) } else { (eb[d].get() / offset, eo[d].get() / offset) }
+        }
+        None => (0.0, 0.0),
+    });
+    let inside =
+        parameter.iter().zip(margin).all(|(r, (lo, hi))| r.get() >= lo && r.get() <= 1.0 + hi);
     if !inside {
         return (None, None);
     }
@@ -763,9 +780,10 @@ pub fn drag_resize<const D: usize>(
         let base_u = bx.base[d];
         let offset_u = bx.offset[d];
         if base_side {
-            let new_offset = ((base_u + offset_u) - new_u).get().max(1.0);
-            resized.base[d] = new_u;
-            resized.offset[d] = Unit::new(new_offset);
+            let far_edge = base_u + offset_u;
+            let clamped_u = Unit::new(new_u.get().min((far_edge - Unit::new(1.0)).get()));
+            resized.base[d] = clamped_u;
+            resized.offset[d] = Unit::new((far_edge - clamped_u).get().max(1.0));
         } else {
             let new_offset = (new_u - base_u).get().max(1.0);
             resized.offset[d] = Unit::new(new_offset);
@@ -1061,10 +1079,11 @@ mod tests {
             base:   [Unit::new(2.0), Unit::new(0.0)],
             offset: [Unit::new(2.0), Unit::new(3.0)],
         };
-        // Drag the base side past end (unit 4.0) to unit 5.5 (=1100px): offset clamps to a minimum of 1.0.
+        // Drag the base side past the far edge (unit 4.0) to unit 5.5 (=1100px): base clamps so it
+        // cannot cross the far edge, and offset clamps to a minimum of 1.0.
         let resized =
             drag_resize(&grid, [Px::new(1100.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
-        assert_eq!(resized.base[0].get(), 5.0);
+        assert_eq!(resized.base[0].get(), 3.0);
         assert_eq!(resized.offset[0].get(), 1.0);
     }
 }
