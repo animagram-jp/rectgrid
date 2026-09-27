@@ -11,61 +11,27 @@ use crate::js_client::{
     dom::{Id, Tag},
 };
 
-// ============================================================
-// Event
-// ============================================================
-//
-// app repositoryのEvent(Canvas/Gesture/Resize/Scroll/Shutdown)に構造を
-// 揃える。Readyのみapp repositoryには無い追加: appはWasmから任意時点で
-// JSへcommandをpushできる(SharedArrayBuffer + arena)ため、App::init内で
-// initial_drawを直接呼べる。rectgrid examplesはJSON/postMessageで
-// Wasm→JSの呼び出しが無く、JS側のApp::process呼び出しへ応答する形でしか
-// commandを返せないため、初回のprocess呼び出しで初期描画を行わせる
-// ためのイベントとして残している。
-
 pub enum Event {
     Ready,
     Canvas(CanvasEvent),
     Gesture(Gesture),
-    /// app repositoryと同じ`{width, height}`に加え、section要素の
-    /// viewport原点(`section_origin`)を持つ。rectgridのグリッド座標変換に
-    /// 必要なため、rectgrid examples固有の追加フィールドとして持たせる。
-    Resize {
-        width:          f64,
-        height:         f64,
-        section_origin: [f64; 2],
-    },
-    Scroll {
-        id: Id,
-        x:  f64,
-        y:  f64,
-    },
+    Resize { width: f64, height: f64, section_origin: [f64; 2] },
+    Scroll { id: Id, x: f64, y: f64 },
     Shutdown,
 }
 
-// ============================================================
-// Grid constants
-// ============================================================
-
-const X_COLS: u32 = 5; // x方向の分割数
-const Y_UNIT_REM: f64 = 4.0; // y方向1マスのrem数
-const REM_PX: f64 = 16.0; // 1rem = 16px 基準
-const SECTION_PADDING_PX: f64 = 0.0; // viewport左端から#section内側までの水平余白合計
-
-// ============================================================
-// Handler
-// ============================================================
+const X_COLS: u32 = 5;
+const Y_UNIT_REM: f64 = 4.0;
+const REM_PX: f64 = 16.0;
+const SECTION_PADDING_PX: f64 = 0.0;
 
 pub struct Handler {
-    articles:         Vec<(u32, BBox<2>)>, // (article番号, BBox)。末尾が最前面・hit優先
-    drag_target:      Option<u32>,         // article番号
-    drag_corner:      Option<[Option<bool>; 2]>, // 面積持ちarticleの角/辺ドラッグ: Some(true)=base側, Some(false)=offset側, None=軸ロック
-    drag_pointer:     [f64; 2], // Drag中の最終raw viewport座標(DragEndのsnap_*呼び出し用)
-    // PointerDown時の(pointer_px - カード左上px)。TouchTrackerが複数指を
-    // PointerStateでまとめて追跡するため、ドラッグ対象固有のこの値は
-    // PointerStateではなくここに持つ。
+    articles:         Vec<(u32, BBox<2>)>,
+    drag_target:      Option<u32>,
+    drag_corner:      Option<[Option<bool>; 2]>,
+    drag_pointer:     [f64; 2],
     drag_offset:      (f64, f64),
-    drag_px:          (f64, f64), // Drag中のカード左上px座標(一時)
+    drag_px:          (f64, f64),
     rectgrid:         RectGrid<2>,
     section_width_px: f64,
 }
@@ -140,11 +106,9 @@ impl Handler {
                 ));
                 const CORNER_THRESHOLD: f64 = 0.1;
                 let point = [Px::new(event.x), Px::new(event.y)];
-                // articles末尾から走査し、extendありhit_testでfirst hitを採用
                 let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
                 let hit_i = self.rectgrid.hit_test(point, &boxes, extend);
                 let hit_n = hit_i.map(|i| self.articles[i].0);
-                // 角判定を最優先、次いでDOM hit、最後にBBox内部hit
                 self.drag_corner = None;
                 let corner: Option<[Option<bool>; 2]> = hit_i.and_then(|i| {
                     let (parameter, corner) =
@@ -173,7 +137,6 @@ impl Handler {
                             self.drag_offset = (offset[0].get(), offset[1].get());
                         }
                     }
-                    // drag開始時点で対象を最前面z-indexに
                     let top_z = self.articles.len();
                     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                     cmds.push(Command::SetZIndex { id: article.encode(), z: top_z as i32 });
@@ -213,7 +176,6 @@ impl Handler {
                 let drag_offset = [Px::new(self.drag_offset.0), Px::new(self.drag_offset.1)];
                 if bx.has_size() {
                     if let Some(corner) = self.drag_corner {
-                        // 角ハンドル: ポインタ絶対座標(viewport)からunit座標を求め、各軸のbase/offsetを動かす
                         let Ok(new_bx) = drag_resize(&self.rectgrid, pointer, bx, corner) else {
                             return (vec![], vec![]);
                         };
@@ -240,11 +202,9 @@ impl Handler {
                         });
                         return (vec![], cmds);
                     }
-                    // 移動ドラッグ: BBoxはUnit座標のまま維持し、DragEndでスナップ
                     let px = drag_translate(&self.rectgrid, pointer, drag_offset);
                     (vec![], vec![translate_card(idx, px[0].get(), px[1].get())])
                 } else {
-                    // 点BBox: 移動中の描画位置のみ更新
                     let px = drag_translate(&self.rectgrid, pointer, drag_offset);
                     self.drag_px = (px[0].get(), px[1].get());
                     (vec![], vec![translate_card(idx, px[0].get(), px[1].get())])
@@ -268,7 +228,6 @@ impl Handler {
                             [Px::new(self.drag_offset.0), Px::new(self.drag_offset.1)];
                         if bx.has_size() {
                             if self.drag_corner.is_none() {
-                                // 移動ドラッグ: base を Unit格子にスナップ
                                 if let Ok(new_bx) = snap_region_to_unit(
                                     &self.rectgrid,
                                     drag_pointer,
@@ -289,9 +248,7 @@ impl Handler {
                                     ));
                                 }
                             }
-                            // 角ハンドルはDrag中に既にUnit確定済み
                         } else {
-                            // 点BBox: drag_pointerからUnit格子にスナップ
                             if let Ok(new_bx) = snap_point_to_unit(
                                 &self.rectgrid,
                                 drag_pointer,
@@ -308,7 +265,6 @@ impl Handler {
                             }
                         }
                     }
-                    // 動かしたarticleを末尾(最前面)へ移動し、変化した範囲のz-indexのみ再割り当て
                     if let Some(old_pos) = self.articles.iter().position(|(n, _)| *n == idx) {
                         let entry = self.articles.remove(old_pos);
                         self.articles.push(entry);
@@ -327,12 +283,6 @@ impl Handler {
                 (vec![], cmds)
             }
             Gesture::DragCancel => {
-                // pointercancelによる中断。DragEndと違いUnit格子へのスナップ
-                // やz-index再割り当ては行わない(何も完了していないため)。
-                // 角ハンドルドラッグはDrag中にbxを直接書き換えているため、
-                // その最後の状態へ視覚位置を合わせ直す(見た目のズレを防ぐ)。
-                // 移動ドラッグ・点BBoxはbx自体は未変更のため、これは実質
-                // ドラッグ開始前の位置への視覚的な巻き戻しになる。
                 let mut cmds = vec![];
                 if let Some(idx) = self.drag_target {
                     if self.drag_corner.is_some() {
@@ -375,9 +325,6 @@ impl Handler {
         }
     }
 
-    /// viewportのresizeを反映する。app repositoryの`process_viewport`と
-    /// 同じ役割だが、rectgridはグリッドの再計算にsection要素のviewport
-    /// 原点(`section_origin_px`)も必要とするため引数に持つ。
     pub fn process_viewport(
         &mut self,
         width_px: f64,
@@ -410,22 +357,14 @@ impl Handler {
         (vec![], cmds)
     }
 
-    /// app repositoryと同じスタブ。rectgrid examplesのデモはscrollに反応
-    /// しない。
     pub fn process_scroll(&mut self, _id: &Id, _x: f64, _y: f64) -> (Vec<Event>, Vec<Command>) {
         (vec![], vec![])
     }
 }
 
-// ============================================================
-// grid helpers
-// ============================================================
-
 fn grid_background_cmd(section_width_px: f64) -> Command {
     let x_unit = section_width_px / X_COLS as f64;
     let y_unit_rem = Y_UNIT_REM;
-    // vertical lines every x_unit px, horizontal lines every y_unit_rem rem
-    // 線色: rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) の1px線（ダークモード追従）
     let bg = format!(
         "repeating-linear-gradient(to right, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {x_unit:.2}px), \
          repeating-linear-gradient(to bottom, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {y_unit_rem}rem)"
@@ -434,18 +373,11 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
     Command::SetBackground { id: section.encode(), value: bg }
 }
 
-// ============================================================
-// drag helpers
-// ============================================================
-
 fn translate_card(n: u32, x: f64, y: f64) -> Command {
     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(n))]);
     Command::SetTranslate { id: article.encode(), x, y }
 }
 
-/// resizeハンドル対象のcorner([x_side, y_side], Some(true)=base側/Some(false)=offset側, None=非該当)から
-/// CSSのresizeカーソル種別を求める。両軸Someの角ハンドルはx_side/y_sideが同じ側(左上・右下)ならnwse、
-/// 異なる側(右上・左下)ならnesw。片軸のみSomeの辺ハンドルはその軸方向(ew/ns)を返す。
 fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<CursorValue> {
     match corner? {
         [Some(x_side), Some(y_side)] => {
@@ -457,8 +389,6 @@ fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<CursorValue> {
     }
 }
 
-/// イベントターゲットIDからarticle番号を抽出する
-/// section_article-N_... の形式で、article セグメントの番号を返す
 fn article_index_at(id: &Id) -> Option<u32> {
     id.0.iter().find_map(|seg| if matches!(seg.tag, Tag::Article) { seg.n } else { None })
 }

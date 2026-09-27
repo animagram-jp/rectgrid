@@ -47,15 +47,6 @@ function start() {
     return w;
 }
 
-// ============================================================
-// receive and excute commands
-// ============================================================
-
-/**
- *  Execute command received from app.
- *
- *  @param {object} cmd - js_client.rs:Command (serialized by serde)
- */
 function execute(cmd) {
     if (cmd.operation === 18) {
         console.error("[wasm]", cmd.message);
@@ -84,24 +75,12 @@ function execute(cmd) {
     }
 }
 
-/**
- *  js_client.rs:Attribute の index。HTML属性名。
- */
 const ATTRIBUTES = ["disabled", "hidden"];
 
-/**
- *  js_client.rs:ClassName の index。CSSクラス名。
- */
 const CLASS_NAMES = ["hide", "show", "hidden"];
 
-/**
- *  js_client.rs:CursorValue の index。CSS `cursor` の値。
- */
 const CURSOR_VALUES = ["default", "grab", "", "nwse-resize", "nesw-resize", "ew-resize", "ns-resize"];
 
-/**
- *  js_client.rs:FnName の index。
- */
 const FN_NAMES = ["hide_toast", "show_toast"];
 
 const js_fn = {
@@ -120,10 +99,6 @@ const js_fn = {
         el.addEventListener("transitionend", () => el.classList.remove("hide"), { once: true });
     },
 };
-
-// ============================================================
-// send event
-// ============================================================
 
 const ROOTS = ["header", "main", "modal", "form", "output", "section"]
     .map(id => document.getElementById(id));

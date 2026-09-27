@@ -7,10 +7,6 @@ use crate::{
     js_client::{CanvasEvent, Command, EventType, Thresholds, TouchTracker, detect_device},
 };
 
-// ============================================================
-// App
-// ============================================================
-
 #[wasm_bindgen]
 pub struct App {
     touch:      TouchTracker,
@@ -39,17 +35,9 @@ impl App {
         app
     }
 
-    /// app repositoryのApp::closeは、EVENT_SHUTDOWNが他のCanvasイベントと
-    /// 同じ経路(App::process)を通るようになった際に不要となり削除された
-    /// (Handler::closeはEvent::Shutdownのdispatch先として残る)。
-    /// rectgrid examplesもJSON側の"shutdown" event_typeを同じ経路に流す
-    /// ため、ここに対応するpublicメソッドは無い。
     pub fn process(&mut self, payload: JsValue) -> JsValue {
         let mut commands = Vec::new();
         let canvas_event = CanvasEvent::decode(&payload);
-        // Resize/Scroll/Shutdownはapp repositoryでは独立したフレーム種別
-        // (CanvasEventを経由しない)なので、ここでもタッチ判定に回さず
-        // 先に振り分ける。
         match canvas_event.event_type {
             EventType::Resize => self.events.push(Event::Resize {
                 width:          canvas_event.x,
@@ -83,7 +71,6 @@ impl App {
             self.events.extend(new_events);
             commands.extend(new_commands);
         }
-        // Command::serialize uses serialize_map; force plain JS objects (not Map) so init.js's cmd.field access works.
         let serializer = Serializer::new().serialize_maps_as_objects(true);
         commands.serialize(&serializer).unwrap_or(JsValue::NULL)
     }
