@@ -30,6 +30,9 @@ cargo test
 
 # wasm build
 cd examples && wasm-pack build --target web --out-dir app --out-name app
+
+# auto formatter
+cargo +nightly fmt
 ```
 
 ---

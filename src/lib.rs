@@ -1,6 +1,6 @@
 #![no_std]
-extern crate core;
 extern crate alloc;
+extern crate core;
 
 use core::fmt::{Display, Formatter, Result};
 
@@ -17,7 +17,9 @@ pub enum RectgridError {
 impl Display for RectgridError {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
-            RectgridError::OutOfIndex(last) => write!(f, "out of index: last valid index is {}", last),
+            RectgridError::OutOfIndex(last) => {
+                write!(f, "out of index: last valid index is {}", last)
+            }
             RectgridError::InvalidDefinition => write!(f, "invalid definition"),
         }
     }

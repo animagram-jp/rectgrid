@@ -1,5 +1,5 @@
-extern crate core;
 extern crate alloc;
+extern crate core;
 extern crate std;
 
 pub mod js_client;

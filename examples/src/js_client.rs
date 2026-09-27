@@ -1,6 +1,6 @@
-use wasm_bindgen::JsValue;
 use js_sys::Reflect;
 use serde::{Serialize, Serializer, ser::SerializeMap};
+use wasm_bindgen::JsValue;
 
 // ============================================================
 // send operation
@@ -9,22 +9,73 @@ use serde::{Serialize, Serializer, ser::SerializeMap};
 // operation番号はJS側 (init.js の execute) のswitch分岐と対応。
 // 値を追加/変更する際は両方を揃えて更新する。
 pub enum Command {
-    SetText         { id: String, value: String },
-    SetValue        { id: String, value: String },
-    SetAttribute    { id: String, attribute: String, value: String },
-    RemoveAttribute { id: String, attribute: String },
-    AddClass        { id: String, value: String },
-    RemoveClass     { id: String, value: String },
-    SetWidth        { id: String, px: u32 },
-    SetHeight       { id: String, px: u32 },
-    SetZIndex       { id: String, z: i32 },
-    SetBackground   { id: String, value: String },
-    SetTranslate    { id: String, x: f64, y: f64 },
-    SetCursor       { id: String, value: String },
-    ShowModal       { id: String },
-    CloseModal      { id: String },
-    Focus           { id: String },
-    JsFn            { id: String, name: String },
+    SetText {
+        id:    String,
+        value: String,
+    },
+    SetValue {
+        id:    String,
+        value: String,
+    },
+    SetAttribute {
+        id:        String,
+        attribute: String,
+        value:     String,
+    },
+    RemoveAttribute {
+        id:        String,
+        attribute: String,
+    },
+    AddClass {
+        id:    String,
+        value: String,
+    },
+    RemoveClass {
+        id:    String,
+        value: String,
+    },
+    SetWidth {
+        id: String,
+        px: u32,
+    },
+    SetHeight {
+        id: String,
+        px: u32,
+    },
+    SetZIndex {
+        id: String,
+        z:  i32,
+    },
+    SetBackground {
+        id:    String,
+        value: String,
+    },
+    SetTranslate {
+        id: String,
+        x:  f64,
+        y:  f64,
+    },
+    SetCursor {
+        id:    String,
+        value: String,
+    },
+    ShowModal {
+        id: String,
+    },
+    CloseModal {
+        id: String,
+    },
+    Focus {
+        id: String,
+    },
+    JsFn {
+        id:   String,
+        name: String,
+    },
+    /// 異常をJS側へ報告する。init.jsのexecuteがconsole.errorへ出力する。
+    Error {
+        message: String,
+    },
 }
 
 impl Serialize for Command {
@@ -112,6 +163,10 @@ impl Serialize for Command {
                 map.serialize_entry("id", id)?;
                 map.serialize_entry("name", name)?;
             }
+            Self::Error { message } => {
+                map.serialize_entry("operation", &18u8)?;
+                map.serialize_entry("message", message)?;
+            }
         }
         map.end()
     }
@@ -123,9 +178,7 @@ impl Serialize for Command {
 
 /// js由来の文字列をstrとして取得
 pub fn get_js_str(obj: &JsValue, key: &str) -> Option<String> {
-    Reflect::get(obj, &JsValue::from_str(key))
-        .ok()
-        .and_then(|v| v.as_string())
+    Reflect::get(obj, &JsValue::from_str(key)).ok().and_then(|v| v.as_string())
 }
 
 /// js由来の整数をu32として取得
@@ -134,11 +187,7 @@ pub fn get_js_u32(obj: &JsValue, key: &str) -> u32 {
         .ok()
         .and_then(|v| v.as_f64())
         .and_then(|f| {
-            if f >= 0.0 && f <= u32::MAX as f64 && f.fract() == 0.0 {
-                Some(f as u32)
-            } else {
-                None
-            }
+            if f >= 0.0 && f <= u32::MAX as f64 && f.fract() == 0.0 { Some(f as u32) } else { None }
         })
         .unwrap_or(0)
 }
@@ -163,13 +212,7 @@ pub fn get_js_f64(obj: &JsValue, key: &str) -> Option<f64> {
     Reflect::get(obj, &JsValue::from_str(key))
         .ok()
         .and_then(|v| v.as_f64())
-        .and_then(|f| {
-            if f.is_finite() {
-                Some(f)
-            } else {
-                None
-            }
-        })
+        .and_then(|f| if f.is_finite() { Some(f) } else { None })
 }
 
 /// js由来のデータを構造体のまま取得
@@ -199,22 +242,22 @@ pub enum EventType {
 impl EventType {
     pub fn decode(event_type: &str) -> Self {
         match event_type {
-            "submit"       => Self::Submit,
-            "click"        => Self::Click,
-            "contextmenu"  => Self::ContextMenu,
-            "keydown"      => Self::KeyDown,
-            "input"        => Self::Input,
-            "change"       => Self::Change,
-            "focusin"      => Self::FocusIn,
-            "focusout"     => Self::FocusOut,
-            "resize"       => Self::Resize,
-            "scroll"       => Self::Scroll,
-            "drop"         => Self::Drop,
-            "pointerdown"  => Self::PointerDown,
-            "pointerup"    => Self::PointerUp,
-            "pointermove"  => Self::PointerMove,
-            "pointercancel"=> Self::PointerCancel,
-            _              => Self::Other,
+            "submit" => Self::Submit,
+            "click" => Self::Click,
+            "contextmenu" => Self::ContextMenu,
+            "keydown" => Self::KeyDown,
+            "input" => Self::Input,
+            "change" => Self::Change,
+            "focusin" => Self::FocusIn,
+            "focusout" => Self::FocusOut,
+            "resize" => Self::Resize,
+            "scroll" => Self::Scroll,
+            "drop" => Self::Drop,
+            "pointerdown" => Self::PointerDown,
+            "pointerup" => Self::PointerUp,
+            "pointermove" => Self::PointerMove,
+            "pointercancel" => Self::PointerCancel,
+            _ => Self::Other,
         }
     }
 }
@@ -234,15 +277,15 @@ pub enum KeyName {
 impl KeyName {
     pub fn decode(key_name: &str) -> Self {
         match key_name {
-            "ArrowUp"    => Self::ArrowUp,
-            "ArrowDown"  => Self::ArrowDown,
-            "ArrowLeft"  => Self::ArrowLeft,
+            "ArrowUp" => Self::ArrowUp,
+            "ArrowDown" => Self::ArrowDown,
+            "ArrowLeft" => Self::ArrowLeft,
             "ArrowRight" => Self::ArrowRight,
-            "Enter"      => Self::Enter,
-            "Escape"     => Self::Escape,
-            "Tab"        => Self::Tab,
-            "Backspace"  => Self::Backspace,
-            _            => Self::Other,
+            "Enter" => Self::Enter,
+            "Escape" => Self::Escape,
+            "Tab" => Self::Tab,
+            "Backspace" => Self::Backspace,
+            _ => Self::Other,
         }
     }
 }
@@ -263,15 +306,14 @@ pub fn detect_device(pointer_coarse: bool) -> Device {
 }
 
 // ============================================================
-// gesture: tap, long press, swipe (up,down,left,right), drag
+// gesture: tap, long press, swipe (up,down,left,right), drag, pinch/pan
 // ============================================================
 //
-// 判定の根拠(閾値の出典・velocity計算窓・LongPressのタイマーレス実装など)は
-// app repository の reference/Gesture.md を参照。ここでの実装はその
-// Thresholds / PointerState / detect_gesture (+ detect_on_release /
-// detect_on_move) を単一ポインタ版としてそのまま移植したもの。app repository
-// はこれを複数指対応の TouchTracker で包んでいるが、rectgrid の examples は
-// 単一ポインタで十分なため TouchTracker 自体は移植していない。
+// 判定の根拠(閾値の出典・velocity計算窓・LongPressのタイマーレス実装、
+// 2本指pinch/panの判定方法など)は app repository の reference/Gesture.md
+// を参照。Thresholds / PointerState / detect_gesture (+ detect_on_release /
+// detect_on_move) に加え、複数指を pointer_id でルーティングして
+// pinch/pan を判定する TouchTracker も app repository からそのまま移植した。
 
 /// ジェスチャ判定の閾値。すべて CSS px と ms。
 ///
@@ -348,32 +390,48 @@ pub enum Gesture {
     SwipeDown,
     SwipeLeft,
     SwipeRight,
-    Drag { x: f64, y: f64 },
+    Drag {
+        x: f64,
+        y: f64,
+    },
     /// ドラッグ終了 (pointerup)。スナップ処理はここで行う。
     DragEnd,
     /// ドラッグ中断 (pointercancel)。DragEndと同一視すると割り込み時に
     /// ドロップを取り消せなくなるため区別する。
     DragCancel,
+    /// 2本指のつまみ操作。継続中は毎フレーム発火する。
+    ///
+    /// `scale` は2本指の開始距離に対する現在距離の比であり、
+    /// `center_x` / `center_y` は2本指の現在の中点。
+    Pinch {
+        scale:    f64,
+        center_x: f64,
+        center_y: f64,
+    },
+    /// つまみ操作の終了 (どちらかの指が離れた)。
+    PinchEnd,
 }
 
-/// PointerCancel でも座標・時刻・drag_offset / drag_px を保持し、is_down と
-/// is_dragging のフラグだけを倒す。判定は detect_gesture がこの直後に
-/// 行うため、そこで必要な値を判定前に消さない。
-#[derive(Default, Clone, Copy)]
+/// PointerCancel でも座標・時刻を保持し、is_down と is_dragging のフラグ
+/// だけを倒す。判定は detect_gesture がこの直後に行うため、そこで必要な
+/// 値を判定前に消さない。
+///
+/// drag_offset / drag_px のようなドラッグ対象固有の状態は、ここではなく
+/// 呼び出し側の Handler が持つ。TouchTracker は複数指をこの型でまとめて
+/// 追跡するため、特定のドラッグ対象に紐づく値をここに置くと使い回せない。
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PointerState {
-    is_down:    bool,
-    start_x:    f64,
-    start_y:    f64,
-    current_x:  f64,
-    current_y:  f64,
-    start_time: f64,
+    is_down:          bool,
+    start_x:          f64,
+    start_y:          f64,
+    current_x:        f64,
+    current_y:        f64,
+    start_time:       f64,
     /// 直近の PointerMove の座標・時刻 (無ければ PointerDown のそれ)。
     /// swipe の速度を「離す直前の実際の動き」から計算するために持つ。
-    last_move_x:    f64,
-    last_move_y:    f64,
-    last_move_time: f64,
-    pub drag_offset: (f64, f64), // PointerDown時の (pointer_px - カード左上px)
-    pub drag_px:     (f64, f64), // Drag中のカード左上px座標(一時)
+    last_move_x:      f64,
+    last_move_y:      f64,
+    last_move_time:   f64,
     is_dragging:      bool, // Dragジェスチャが1回以上発火した
     /// 長押しを発火済みか。連続発火を防ぐラッチ。
     long_press_fired: bool,
@@ -395,28 +453,32 @@ impl PointerState {
                 last_move_x:      x,
                 last_move_y:      y,
                 last_move_time:   time,
-                drag_offset:      (0.0, 0.0),
-                drag_px:          (0.0, 0.0),
                 is_dragging:      false,
                 long_press_fired: false,
                 cancelled:        false,
             },
             EventType::PointerMove => Self {
-                current_x:      x,
-                current_y:      y,
-                last_move_x:    x,
-                last_move_y:    y,
+                current_x: x,
+                current_y: y,
+                last_move_x: x,
+                last_move_y: y,
                 last_move_time: time,
                 ..self
             },
-            EventType::PointerUp => Self {
-                is_down: false, current_x: x, current_y: y, cancelled: false, ..self
-            },
-            EventType::PointerCancel => Self {
-                is_down: false, current_x: x, current_y: y, cancelled: true, ..self
-            },
+            EventType::PointerUp => {
+                Self { is_down: false, current_x: x, current_y: y, cancelled: false, ..self }
+            }
+            EventType::PointerCancel => {
+                Self { is_down: false, current_x: x, current_y: y, cancelled: true, ..self }
+            }
             _ => self,
         }
+    }
+
+    /// 現在座標。TouchTrackerが2本指セッション終了時に、合成ポインタへ
+    /// 送るPointerUpの座標を作るのに使う。
+    pub const fn current(&self) -> (f64, f64) {
+        (self.current_x, self.current_y)
     }
 
     /// 押下開始からの移動距離 (px)。
@@ -540,7 +602,11 @@ fn detect_on_release(
 }
 
 /// 移動イベントの判定。
-fn detect_on_move(state: &mut PointerState, current_time: f64, thresholds: &Thresholds) -> Option<Gesture> {
+fn detect_on_move(
+    state: &mut PointerState,
+    current_time: f64,
+    thresholds: &Thresholds,
+) -> Option<Gesture> {
     if !state.is_down {
         return None;
     }
@@ -585,6 +651,594 @@ fn detect_on_move(state: &mut PointerState, current_time: f64, thresholds: &Thre
 }
 
 // ============================================================
+// gesture: two-finger (pinch / pan)
+// ============================================================
+//
+// 2本指の入力を、逆向きの変位ならpinch (scale)、平行な変位ならpan
+// (単一ポインタ用パイプラインへ渡す合成点) に振り分ける。
+//
+// TouchTrackerがpointer_idごとに指をprimary/secondaryへ振り分け、
+// app.rsのApp::processから呼ばれる。
+
+/// 2本指のうち一方の追跡状態。
+#[derive(Debug, Clone, Copy)]
+struct TouchPoint {
+    id:        u32,
+    start_x:   f64,
+    start_y:   f64,
+    current_x: f64,
+    current_y: f64,
+}
+
+impl TouchPoint {
+    const fn new(id: u32, x: f64, y: f64) -> Self {
+        Self { id, start_x: x, start_y: y, current_x: x, current_y: y }
+    }
+
+    fn displacement(&self) -> (f64, f64) {
+        (self.current_x - self.start_x, self.current_y - self.start_y)
+    }
+}
+
+/// pan/pinchの確定状態。一度確定したら、2本指セッションが終わるまで
+/// ラッチする ([`TwoFingerState::fold`] のdocを参照)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum TwoFingerMode {
+    /// まだ確定していない。両方の指の変位がTWO_FINGER_COMMIT_PXを
+    /// 超えるまでこのまま。
+    #[default]
+    Undetermined,
+    /// 2本指パンとして確定。
+    Pan,
+    /// pinchとして確定。
+    Pinch,
+}
+
+/// 各指がこの距離 (px) 動くまでpan/pinchを確定しない。
+///
+/// 変位ベクトルが(0,0)のままだと内積が常に0になり、片方の指だけ先に
+/// 動いた瞬間がpan側(内積がpinch閾値未満にならない)に誤って倒れる。
+/// 両方が動くまで待つことでこれを避ける。
+const TWO_FINGER_COMMIT_PX: f64 = 8.0;
+
+/// pinchと判定する際の、変位ベクトルの内積の閾値。
+///
+/// 内積が正(順向き)でも小さければ「ほぼ直交」であり、pinch側に倒しても
+/// 実害が小さい。0.0 (符号だけで判定) から始めて実機で調整する想定。
+const PINCH_DOT_THRESHOLD: f64 = 0.0;
+
+/// 畳み込み結果。[`TwoFingerState::fold`] へ渡す「仮想の1点」か、
+/// pinchとして確定したscaleと中心座標のどちらか。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FoldedInput {
+    /// 2本の指がほぼ平行に動いている。単一ポインタ用パイプラインへ渡す
+    /// 合成座標。
+    AsSinglePoint { x: f64, y: f64 },
+    /// 2本の指が逆向きに動いている。pinchとして確定。
+    Pinch { scale: f64, center_x: f64, center_y: f64 },
+    /// 1本指のみ、または判定材料が揃っていない。
+    None,
+}
+
+/// 2本指ジェスチャの追跡状態。primaryが埋まっていない状態でsecondary
+/// だけ埋まることはない (1本目が離れたら2本目をprimaryへ繰り上げる)。
+/// 3本目以降は無視する (zoom用途では不要と判断)。
+#[derive(Debug, Clone, Copy, Default)]
+struct TwoFingerState {
+    primary:   Option<TouchPoint>,
+    secondary: Option<TouchPoint>,
+    mode:      TwoFingerMode,
+}
+
+impl TwoFingerState {
+    /// 指が1本追加で触れた。3本目以降は無視する。
+    fn touch_down(self, id: u32, x: f64, y: f64) -> Self {
+        match (self.primary, self.secondary) {
+            (None, _) => Self { primary: Some(TouchPoint::new(id, x, y)), ..self },
+            (Some(_), None) => Self {
+                secondary: Some(TouchPoint::new(id, x, y)),
+                mode: TwoFingerMode::Undetermined,
+                ..self
+            },
+            (Some(_), Some(_)) => self,
+        }
+    }
+
+    /// idに一致する指が動いた。どちらにも一致しなければ無視する。
+    fn touch_move(self, id: u32, x: f64, y: f64) -> Self {
+        if self.primary.is_some_and(|p| p.id == id) {
+            Self {
+                primary: self.primary.map(|p| TouchPoint { current_x: x, current_y: y, ..p }),
+                ..self
+            }
+        } else if self.secondary.is_some_and(|s| s.id == id) {
+            Self {
+                secondary: self.secondary.map(|s| TouchPoint { current_x: x, current_y: y, ..s }),
+                ..self
+            }
+        } else {
+            self
+        }
+    }
+
+    /// idに一致する指が離れた。primaryならsecondaryを繰り上げる。戻り値の
+    /// 2つ目は、離れる前の確定状態 (呼び出し側がGesture::PinchEndを出す
+    /// かどうかの判断に使う。[`TouchTracker`]を参照)。
+    fn touch_up(self, id: u32) -> (Self, TwoFingerMode) {
+        let ended_mode = self.mode;
+        if self.primary.is_some_and(|p| p.id == id) {
+            (
+                Self {
+                    primary:   self.secondary,
+                    secondary: None,
+                    mode:      TwoFingerMode::Undetermined,
+                },
+                ended_mode,
+            )
+        } else if self.secondary.is_some_and(|s| s.id == id) {
+            (Self { secondary: None, mode: TwoFingerMode::Undetermined, ..self }, ended_mode)
+        } else {
+            (self, TwoFingerMode::Undetermined)
+        }
+    }
+
+    fn primary_id(&self) -> Option<u32> {
+        self.primary.map(|p| p.id)
+    }
+
+    fn secondary_id(&self) -> Option<u32> {
+        self.secondary.map(|p| p.id)
+    }
+
+    /// primaryの現在座標。2本指セッションが終わって1本指に戻る際、残った
+    /// 指の位置でPointerStateを作り直すのに使う
+    /// ([`TouchTracker::resync_primary`]を参照)。
+    fn primary_current(&self) -> Option<(f64, f64)> {
+        self.primary.map(|p| (p.current_x, p.current_y))
+    }
+
+    /// 現在の2本指の状態から、畳み込み結果を導出する。
+    ///
+    /// 2本とも揃っていなければFoldedInput::None。揃っていても、両方の
+    /// 指の変位がTWO_FINGER_COMMIT_PXを超えるまでは判定を保留し
+    /// FoldedInput::Noneを返す (doc冒頭の1.を参照)。一度Pan/Pinchを
+    /// 確定したら、2本指セッションが終わるまで再判定しない
+    /// (doc冒頭の2.を参照)。
+    fn fold(&mut self) -> FoldedInput {
+        let (Some(p), Some(s)) = (self.primary, self.secondary) else {
+            return FoldedInput::None;
+        };
+
+        if self.mode == TwoFingerMode::Undetermined {
+            let d1 = p.displacement();
+            let d2 = s.displacement();
+            let moved1 = (d1.0 * d1.0 + d1.1 * d1.1).sqrt() > TWO_FINGER_COMMIT_PX;
+            let moved2 = (d2.0 * d2.0 + d2.1 * d2.1).sqrt() > TWO_FINGER_COMMIT_PX;
+            if !(moved1 && moved2) {
+                return FoldedInput::None;
+            }
+            let dot = d1.0 * d2.0 + d1.1 * d2.1;
+            self.mode =
+                if dot < PINCH_DOT_THRESHOLD { TwoFingerMode::Pinch } else { TwoFingerMode::Pan };
+        }
+
+        match self.mode {
+            TwoFingerMode::Undetermined => FoldedInput::None,
+            TwoFingerMode::Pan => FoldedInput::AsSinglePoint {
+                x: (p.current_x + s.current_x) / 2.0,
+                y: (p.current_y + s.current_y) / 2.0,
+            },
+            TwoFingerMode::Pinch => {
+                let start_distance = two_point_distance(p.start_x, p.start_y, s.start_x, s.start_y);
+                if start_distance <= 0.0 {
+                    return FoldedInput::None;
+                }
+                let current_distance =
+                    two_point_distance(p.current_x, p.current_y, s.current_x, s.current_y);
+                FoldedInput::Pinch {
+                    scale:    current_distance / start_distance,
+                    center_x: (p.current_x + s.current_x) / 2.0,
+                    center_y: (p.current_y + s.current_y) / 2.0,
+                }
+            }
+        }
+    }
+}
+
+/// 2点間の距離 (px)。PointerState::distanceと同じ式。
+fn two_point_distance(x0: f64, y0: f64, x1: f64, y1: f64) -> f64 {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    (dx * dx + dy * dy).sqrt()
+}
+
+#[cfg(test)]
+mod two_finger_tests {
+    use super::*;
+
+    /// 片方の指だけが先に動いても、もう片方が動くまで確定しない。
+    #[test]
+    fn waits_for_both_fingers_before_classifying() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+
+        // primaryだけが動く。secondaryの変位は(0,0)のまま。
+        state = state.touch_move(1, 110.0, 100.0);
+        assert_eq!(state.fold(), FoldedInput::None);
+        state = state.touch_move(1, 130.0, 100.0);
+        assert_eq!(state.fold(), FoldedInput::None);
+
+        // secondaryも動き、両者が閾値を超えて初めて確定する。
+        state = state.touch_move(1, 150.0, 100.0).touch_move(2, 150.0, 100.0);
+        assert_eq!(
+            state.fold(),
+            FoldedInput::Pinch { scale: 0.0, center_x: 150.0, center_y: 100.0 }
+        );
+    }
+
+    #[test]
+    fn symmetric_pinch_in_reduces_scale() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+        state = state.touch_move(1, 140.0, 100.0).touch_move(2, 160.0, 100.0);
+        match state.fold() {
+            FoldedInput::Pinch { scale, .. } => assert!(scale < 1.0, "scale = {scale}"),
+            other => panic!("expected Pinch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn symmetric_pinch_out_increases_scale() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 140.0, 100.0).touch_down(2, 160.0, 100.0);
+        state = state.touch_move(1, 100.0, 100.0).touch_move(2, 200.0, 100.0);
+        match state.fold() {
+            FoldedInput::Pinch { scale, .. } => assert!(scale > 1.0, "scale = {scale}"),
+            other => panic!("expected Pinch, got {other:?}"),
+        }
+    }
+
+    /// 両指がほぼ同じ向き・同じ距離動けばpan (単一ポインタパイプラインへ
+    /// の合成点) になる。
+    #[test]
+    fn parallel_motion_is_pan_not_pinch() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+        state = state.touch_move(1, 120.0, 100.0).touch_move(2, 220.0, 100.0);
+        assert_eq!(state.fold(), FoldedInput::AsSinglePoint { x: 170.0, y: 100.0 });
+    }
+
+    /// 一度確定したら、その後の入力で符号が変わっても再判定しない。
+    #[test]
+    fn mode_latches_after_commit() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+        state = state.touch_move(1, 140.0, 100.0).touch_move(2, 160.0, 100.0);
+        assert!(matches!(state.fold(), FoldedInput::Pinch { .. }));
+
+        // 内積の符号だけで見ればもうpinchではない動きだが、ラッチして
+        // いるためpanには切り替わらない。
+        state = state.touch_move(1, 140.0, 100.0).touch_move(2, 140.0, 100.0);
+        assert!(matches!(state.fold(), FoldedInput::Pinch { .. }));
+    }
+
+    /// 3本目以降は無視する。
+    #[test]
+    fn third_finger_is_ignored() {
+        let state = TwoFingerState::default()
+            .touch_down(1, 100.0, 100.0)
+            .touch_down(2, 200.0, 100.0)
+            .touch_down(3, 300.0, 100.0);
+        assert_eq!(state.primary_id(), Some(1));
+        assert_eq!(state.secondary_id(), Some(2));
+    }
+
+    /// 1本目が離れたら2本目がprimaryへ繰り上がり、モードは再判定待ちに
+    /// 戻る。
+    #[test]
+    fn primary_release_promotes_secondary() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+        state = state.touch_move(1, 140.0, 100.0).touch_move(2, 160.0, 100.0);
+        assert!(matches!(state.fold(), FoldedInput::Pinch { .. }));
+
+        let (next, ended_mode) = state.touch_up(1);
+        state = next;
+        assert_eq!(ended_mode, TwoFingerMode::Pinch);
+        assert_eq!(state.primary_id(), Some(2));
+        assert!(state.secondary_id().is_none());
+        // 1本指しか残っていないので確定しない。
+        assert_eq!(state.fold(), FoldedInput::None);
+    }
+}
+
+// ============================================================
+// gesture: TouchTracker (pointer_idによるルーティング)
+// ============================================================
+//
+// 複数指のポインタ入力を、1系統のGestureへ落とす。
+//
+// 最初に触れた指をprimaryとし、既存の単一ポインタ用パイプライン
+// (PointerState / detect_gesture) でそのままtap/press/swipe/dragを判定
+// する。2本目が触れたらsecondaryとしてTwoFingerStateへ渡し、pan/pinchの
+// 判定を始める。3本目以降は無視する。
+//
+// 2本指セッション中はprimaryの単一ポインタ判定を凍結する (PointerMove /
+// PointerUpをprimary_stateへ回さない)。panと確定した場合のみ、2本指の
+// 合成点を仮想の単一ポインタ (pan_state) として同じパイプラインに流し、
+// Drag/Swipe/Tapをそのまま得る。pinchと確定した場合はPointerStateを
+// 経由せず、Gesture::Pinchを直接返す。
+//
+// 2本指セッションが終わって1本指に戻るときは、残った指の現在位置で
+// primary_stateをPointerDownし直す (resync_primary)。凍結中に動いた分の
+// 距離を再開後の単一ポインタ判定へ持ち込まないためである。
+#[derive(Debug, Default)]
+pub struct TouchTracker {
+    primary_state: PointerState,
+    two_fingers:   TwoFingerState,
+    pan_state:     Option<PointerState>,
+}
+
+impl TouchTracker {
+    /// 1イベント分進めて、確定したジェスチャがあれば返す。
+    pub fn handle(
+        &mut self,
+        event_type: &EventType,
+        pointer_id: u32,
+        x: f64,
+        y: f64,
+        time: f64,
+        thresholds: &Thresholds,
+    ) -> Option<Gesture> {
+        match event_type {
+            EventType::PointerDown => {
+                self.on_down(pointer_id, x, y, time);
+                None
+            }
+            EventType::PointerMove => self.on_move(pointer_id, x, y, time, thresholds),
+            EventType::PointerUp | EventType::PointerCancel => {
+                self.on_up(event_type, pointer_id, x, y, time, thresholds)
+            }
+            _ => None,
+        }
+    }
+
+    /// 現在アクティブなPointerState。2本指pan中はその合成ポインタ、
+    /// それ以外はprimaryのもの。Gesture::Pinch / PinchEndには対応する
+    /// PointerStateが無いため、呼び出し側はそれらのvariantではこれを
+    /// 参照しない。
+    pub const fn active_state(&self) -> &PointerState {
+        match &self.pan_state {
+            Some(state) => state,
+            None => &self.primary_state,
+        }
+    }
+
+    fn on_down(&mut self, id: u32, x: f64, y: f64, time: f64) {
+        if self.two_fingers.primary_id() == Some(id) || self.two_fingers.secondary_id() == Some(id)
+        {
+            // 既に追跡中のidへの重複PointerDown。新規の指としては扱わず、
+            // 位置の更新だけ反映する。
+            self.two_fingers = self.two_fingers.touch_move(id, x, y);
+            return;
+        }
+        if self.two_fingers.primary_id().is_none() {
+            self.primary_state = self.primary_state.update(&EventType::PointerDown, x, y, time);
+        }
+        self.two_fingers = self.two_fingers.touch_down(id, x, y);
+    }
+
+    fn on_move(
+        &mut self,
+        id: u32,
+        x: f64,
+        y: f64,
+        time: f64,
+        thresholds: &Thresholds,
+    ) -> Option<Gesture> {
+        let is_primary = self.two_fingers.primary_id() == Some(id);
+        let is_secondary = self.two_fingers.secondary_id() == Some(id);
+        if !is_primary && !is_secondary {
+            return None; // 3本目以降、追跡していない指。
+        }
+        self.two_fingers = self.two_fingers.touch_move(id, x, y);
+
+        if self.two_fingers.secondary_id().is_some() {
+            // 2本指セッション中。primary単独の判定は凍結し、foldに譲る。
+            return self.fold_and_emit(time, thresholds);
+        }
+
+        // 1本指のまま。既存のパイプラインで判定する。
+        let prev = self.primary_state;
+        self.primary_state = self.primary_state.update(&EventType::PointerMove, x, y, time);
+        detect_gesture(&mut self.primary_state, &prev, &EventType::PointerMove, time, thresholds)
+    }
+
+    fn on_up(
+        &mut self,
+        event_type: &EventType,
+        id: u32,
+        x: f64,
+        y: f64,
+        time: f64,
+        thresholds: &Thresholds,
+    ) -> Option<Gesture> {
+        let is_primary = self.two_fingers.primary_id() == Some(id);
+        let is_secondary = self.two_fingers.secondary_id() == Some(id);
+        let had_secondary = self.two_fingers.secondary_id().is_some();
+
+        if is_secondary || (is_primary && had_secondary) {
+            // 2本指セッションの終了 (どちらの指が離れても終わる)。
+            let (next, ended_mode) = self.two_fingers.touch_up(id);
+            self.two_fingers = next;
+            let gesture = self.end_two_finger_session(event_type, ended_mode, time, thresholds);
+            // 残った1本を今の位置から数え直す。
+            self.resync_primary(time);
+            gesture
+        } else if is_primary {
+            // 通常の単一ポインタの終了。既存のパイプラインそのまま。
+            let prev = self.primary_state;
+            self.primary_state = self.primary_state.update(event_type, x, y, time);
+            let gesture =
+                detect_gesture(&mut self.primary_state, &prev, event_type, time, thresholds);
+            self.two_fingers = self.two_fingers.touch_up(id).0;
+            gesture
+        } else {
+            None // 追跡していない指。
+        }
+    }
+
+    /// 2本指セッションを閉じる。pinchだったらPinchEnd、panだったら合成
+    /// ポインタへ最後のPointerUp / PointerCancelを送ってDragEnd /
+    /// DragCancel / Swipe* / Tapを得る。まだ確定していなければ
+    /// (Undetermined) 何も発行していないのでNone。
+    fn end_two_finger_session(
+        &mut self,
+        event_type: &EventType,
+        ended_mode: TwoFingerMode,
+        time: f64,
+        thresholds: &Thresholds,
+    ) -> Option<Gesture> {
+        match ended_mode {
+            TwoFingerMode::Undetermined => None,
+            TwoFingerMode::Pinch => Some(Gesture::PinchEnd),
+            TwoFingerMode::Pan => {
+                let state = self.pan_state.take()?;
+                let (cx, cy) = state.current();
+                let prev = state;
+                let mut next = state.update(event_type, cx, cy, time);
+                detect_gesture(&mut next, &prev, event_type, time, thresholds)
+            }
+        }
+    }
+
+    /// 2本指セッションが終わって残った1本を、今の位置からPointerDownし
+    /// 直す。凍結中に動いた分を引きずらないため。
+    fn resync_primary(&mut self, time: f64) {
+        self.primary_state = match self.two_fingers.primary_current() {
+            Some((x, y)) => PointerState::default().update(&EventType::PointerDown, x, y, time),
+            None => PointerState::default(),
+        };
+    }
+
+    fn fold_and_emit(&mut self, time: f64, thresholds: &Thresholds) -> Option<Gesture> {
+        match self.two_fingers.fold() {
+            FoldedInput::None => None,
+            FoldedInput::Pinch { scale, center_x, center_y } => {
+                Some(Gesture::Pinch { scale, center_x, center_y })
+            }
+            FoldedInput::AsSinglePoint { x, y } => match self.pan_state {
+                None => {
+                    self.pan_state =
+                        Some(PointerState::default().update(&EventType::PointerDown, x, y, time));
+                    None
+                }
+                Some(state) => {
+                    let prev = state;
+                    let mut next = state.update(&EventType::PointerMove, x, y, time);
+                    let gesture =
+                        detect_gesture(&mut next, &prev, &EventType::PointerMove, time, thresholds);
+                    self.pan_state = Some(next);
+                    gesture
+                }
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod touch_tracker_tests {
+    use super::*;
+
+    /// `App::process` と同じ順序で1イベントずつ`handle`に流す。
+    fn run(events: &[(EventType, u32, f64, f64, f64)], th: &Thresholds) -> Vec<Option<Gesture>> {
+        let mut tracker = TouchTracker::default();
+        events
+            .iter()
+            .map(|(event_type, id, x, y, time)| tracker.handle(event_type, *id, *x, *y, *time, th))
+            .collect()
+    }
+
+    /// 1本指のときは、これまでの単一指パイプラインと同じ結果になる。
+    #[test]
+    fn single_finger_behaves_like_before() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerMove, 1, 200.0, 100.0, 50.0),
+                (EventType::PointerUp, 1, 260.0, 100.0, 100.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [None, None, Some(Gesture::SwipeRight)]);
+    }
+
+    /// 2本目が触れるとprimary単独の判定は凍結する。片方だけが先に動いても
+    /// 、両方がTWO_FINGER_COMMIT_PXを超えて初めてpinchが確定する。
+    #[test]
+    fn second_finger_freezes_primary_until_pinch_commits() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 2, 200.0, 100.0, 0.0),
+                (EventType::PointerMove, 1, 150.0, 100.0, 50.0), // primaryだけ動く
+                (EventType::PointerMove, 2, 150.0, 100.0, 60.0), // secondaryも動き確定
+            ],
+            &th,
+        );
+        assert_eq!(
+            got,
+            [
+                None,
+                None,
+                None, // primary単独ではDragも何も出ない (凍結中)
+                Some(Gesture::Pinch { scale: 0.0, center_x: 150.0, center_y: 100.0 }),
+            ]
+        );
+    }
+
+    /// pinchが確定した後、2本目が離れるとPinchEnd。
+    #[test]
+    fn pinch_end_on_secondary_release() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 2, 200.0, 100.0, 0.0),
+                (EventType::PointerMove, 1, 150.0, 100.0, 50.0),
+                (EventType::PointerMove, 2, 150.0, 100.0, 60.0),
+                (EventType::PointerUp, 2, 150.0, 100.0, 100.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[4], Some(Gesture::PinchEnd));
+    }
+
+    /// 平行に動く2本指パンは、合成した中点を仮想の単一ポインタへ流し、
+    /// 閾値を超えるとDragとして出る。離れるとDragEnd。
+    #[test]
+    fn two_finger_pan_emits_drag_then_drag_end() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 0.0, 0.0, 0.0),
+                (EventType::PointerDown, 2, 100.0, 0.0, 0.0),
+                (EventType::PointerMove, 1, 30.0, 0.0, 50.0), // まだ確定しない
+                (EventType::PointerMove, 2, 130.0, 0.0, 60.0), // pan確定、合成点(80,0)でpan_stateを作る
+                (EventType::PointerMove, 1, 60.0, 0.0, 120.0), // 合成点(95,0)、start(80,0)から15px
+                (EventType::PointerUp, 2, 130.0, 0.0, 200.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[0..4], [None, None, None, None]);
+        assert_eq!(got[4], Some(Gesture::Drag { x: 95.0, y: 0.0 }));
+        assert_eq!(got[5], Some(Gesture::DragEnd));
+    }
+}
+
+// ============================================================
 // dom (rust item <=> element id)
 // ============================================================
 //
@@ -597,21 +1251,31 @@ fn detect_on_move(state: &mut PointerState, current_time: f64, thresholds: &Thre
 // dom::Id::decode()  -> Vec<dom::Segment> のパース
 
 pub mod dom {
-    use core::{option::Option::{self, Some, None}, result::Result::Ok, cmp::PartialEq, clone::Clone};
-    use alloc::{vec::Vec, string::String, format};
+    use alloc::{format, string::String, vec::Vec};
+    use core::{
+        clone::Clone,
+        cmp::PartialEq,
+        option::Option::{self, None, Some},
+        result::Result::Ok,
+    };
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Tag {
         Body,
         Head,
         Header,
-        H1, H2, H3,
-        Ul, Li,
+        H1,
+        H2,
+        H3,
+        Ul,
+        Li,
         Button,
         Main,
         Section,
         Span,
-        Dl, Dt, Dd,
+        Dl,
+        Dt,
+        Dd,
         Ol,
         P,
         Textarea,
@@ -620,89 +1284,95 @@ pub mod dom {
         Form,
         Input,
         Fieldset,
-        Table, Thead, Tbody, Tr, Th, Td,
+        Table,
+        Thead,
+        Tbody,
+        Tr,
+        Th,
+        Td,
         Select,
         Footer,
-        Output, Article,
+        Output,
+        Article,
         Other,
     }
 
     impl Tag {
         pub fn decode(s: &str) -> Self {
             match s {
-                "body"     => Self::Body,
-                "head"     => Self::Head,
-                "header"   => Self::Header,
-                "h1"       => Self::H1,
-                "h2"       => Self::H2,
-                "h3"       => Self::H3,
-                "ul"       => Self::Ul,
-                "li"       => Self::Li,
-                "button"   => Self::Button,
-                "main"     => Self::Main,
-                "section"  => Self::Section,
-                "span"     => Self::Span,
-                "dl"       => Self::Dl,
-                "dt"       => Self::Dt,
-                "dd"       => Self::Dd,
-                "ol"       => Self::Ol,
-                "p"        => Self::P,
+                "body" => Self::Body,
+                "head" => Self::Head,
+                "header" => Self::Header,
+                "h1" => Self::H1,
+                "h2" => Self::H2,
+                "h3" => Self::H3,
+                "ul" => Self::Ul,
+                "li" => Self::Li,
+                "button" => Self::Button,
+                "main" => Self::Main,
+                "section" => Self::Section,
+                "span" => Self::Span,
+                "dl" => Self::Dl,
+                "dt" => Self::Dt,
+                "dd" => Self::Dd,
+                "ol" => Self::Ol,
+                "p" => Self::P,
                 "textarea" => Self::Textarea,
-                "drawer"   => Self::Drawer,
-                "modal"    => Self::Modal,
-                "form"     => Self::Form,
-                "input"    => Self::Input,
+                "drawer" => Self::Drawer,
+                "modal" => Self::Modal,
+                "form" => Self::Form,
+                "input" => Self::Input,
                 "fieldset" => Self::Fieldset,
-                "table"    => Self::Table,
-                "thead"    => Self::Thead,
-                "tbody"    => Self::Tbody,
-                "tr"       => Self::Tr,
-                "th"       => Self::Th,
-                "td"       => Self::Td,
-                "select"   => Self::Select,
-                "footer"   => Self::Footer,
-                "output"   => Self::Output,
-                "article"  => Self::Article,
-                _          => Self::Other,
+                "table" => Self::Table,
+                "thead" => Self::Thead,
+                "tbody" => Self::Tbody,
+                "tr" => Self::Tr,
+                "th" => Self::Th,
+                "td" => Self::Td,
+                "select" => Self::Select,
+                "footer" => Self::Footer,
+                "output" => Self::Output,
+                "article" => Self::Article,
+                _ => Self::Other,
             }
         }
 
         pub fn encode(&self) -> &'static str {
             match self {
-                Self::Body     => "body",
-                Self::Head     => "head",
-                Self::Header   => "header",
-                Self::H1       => "h1",
-                Self::H2       => "h2",
-                Self::H3       => "h3",
-                Self::Ul       => "ul",
-                Self::Li       => "li",
-                Self::Button   => "button",
-                Self::Main     => "main",
-                Self::Section  => "section",
-                Self::Span     => "span",
-                Self::Dl       => "dl",
-                Self::Dt       => "dt",
-                Self::Dd       => "dd",
-                Self::Ol       => "ol",
-                Self::P        => "p",
+                Self::Body => "body",
+                Self::Head => "head",
+                Self::Header => "header",
+                Self::H1 => "h1",
+                Self::H2 => "h2",
+                Self::H3 => "h3",
+                Self::Ul => "ul",
+                Self::Li => "li",
+                Self::Button => "button",
+                Self::Main => "main",
+                Self::Section => "section",
+                Self::Span => "span",
+                Self::Dl => "dl",
+                Self::Dt => "dt",
+                Self::Dd => "dd",
+                Self::Ol => "ol",
+                Self::P => "p",
                 Self::Textarea => "textarea",
-                Self::Drawer   => "drawer",
-                Self::Modal    => "modal",
-                Self::Form     => "form",
-                Self::Input    => "input",
+                Self::Drawer => "drawer",
+                Self::Modal => "modal",
+                Self::Form => "form",
+                Self::Input => "input",
                 Self::Fieldset => "fieldset",
-                Self::Table    => "table",
-                Self::Thead    => "thead",
-                Self::Tbody    => "tbody",
-                Self::Tr       => "tr",
-                Self::Th       => "th",
-                Self::Td       => "td",
-                Self::Select   => "select",
-                Self::Footer   => "footer",
-                Self::Output   => "output",
-                Self::Article  => "article",
-                Self::Other    => "",
+                Self::Table => "table",
+                Self::Thead => "thead",
+                Self::Tbody => "tbody",
+                Self::Tr => "tr",
+                Self::Th => "th",
+                Self::Td => "td",
+                Self::Select => "select",
+                Self::Footer => "footer",
+                Self::Output => "output",
+                Self::Article => "article",
+                Self::Other => "",
             }
         }
     }
@@ -715,8 +1385,12 @@ pub mod dom {
     }
 
     impl Segment {
-        pub fn new(tag: Tag) -> Self { Self { tag, n: None } }
-        pub fn numbered(tag: Tag, n: u32) -> Self { Self { tag, n: Some(n) } }
+        pub fn new(tag: Tag) -> Self {
+            Self { tag, n: None }
+        }
+        pub fn numbered(tag: Tag, n: u32) -> Self {
+            Self { tag, n: Some(n) }
+        }
 
         pub fn decode(s: &str) -> Self {
             if let Some(pos) = s.rfind('-') {
@@ -731,7 +1405,7 @@ pub mod dom {
         pub fn encode(&self) -> String {
             match self.n {
                 Some(n) => format!("{}-{}", self.tag.encode(), n),
-                None    => self.tag.encode().to_string(),
+                None => self.tag.encode().to_string(),
             }
         }
     }
@@ -750,10 +1424,7 @@ pub mod dom {
         }
 
         pub fn encode(&self) -> String {
-            self.0.iter()
-                .map(Segment::encode)
-                .collect::<Vec<_>>()
-                .join("_")
+            self.0.iter().map(Segment::encode).collect::<Vec<_>>().join("_")
         }
 
         pub fn last_tag(&self) -> Option<&Tag> {
@@ -768,27 +1439,50 @@ pub mod dom {
 
 pub struct CanvasEvent {
     pub event_type:       EventType,
-    pub id:                dom::Id,
-    pub key:                KeyName,
-    pub value:               String,
-    pub x:                      f64,
-    pub y:                      f64,
-    pub time:                   f64,
-    pub section_origin_x:       f64,
-    pub section_origin_y:       f64,
+    pub id:               dom::Id,
+    pub key:              KeyName,
+    pub value:            String,
+    pub x:                f64,
+    pub y:                f64,
+    pub time:             f64,
+    pub section_origin_x: f64,
+    pub section_origin_y: f64,
+    /// `PointerEvent.pointerId`。pointer系以外のイベントでは0
+    /// (init.jsのsendが`e.pointerId ?? 0`で送る)。複数指の追跡に使う
+    /// ([`TouchTracker`]を参照)。
+    pub pointer_id:       u32,
 }
 
 impl CanvasEvent {
     pub fn decode(payload: &wasm_bindgen::JsValue) -> Self {
-        let event_type      = get_js_str(payload, "event_type").as_deref().map(EventType::decode).unwrap_or(EventType::Other);
-        let id               = get_js_str(payload, "target_id").as_deref().map(dom::Id::decode).unwrap_or_else(|| dom::Id(vec![]));
-        let key              = get_js_str(payload, "key").as_deref().map(KeyName::decode).unwrap_or(KeyName::Other);
-        let value            = get_js_str(payload, "value").unwrap_or_default();
-        let x                = get_js_f64(payload, "x").unwrap_or(0.0);
-        let y                = get_js_f64(payload, "y").unwrap_or(0.0);
-        let time             = get_js_f64(payload, "time").unwrap_or(0.0);
+        let event_type = get_js_str(payload, "event_type")
+            .as_deref()
+            .map(EventType::decode)
+            .unwrap_or(EventType::Other);
+        let id = get_js_str(payload, "target_id")
+            .as_deref()
+            .map(dom::Id::decode)
+            .unwrap_or_else(|| dom::Id(vec![]));
+        let key =
+            get_js_str(payload, "key").as_deref().map(KeyName::decode).unwrap_or(KeyName::Other);
+        let value = get_js_str(payload, "value").unwrap_or_default();
+        let x = get_js_f64(payload, "x").unwrap_or(0.0);
+        let y = get_js_f64(payload, "y").unwrap_or(0.0);
+        let time = get_js_f64(payload, "time").unwrap_or(0.0);
         let section_origin_x = get_js_f64(payload, "section_origin_x").unwrap_or(0.0);
         let section_origin_y = get_js_f64(payload, "section_origin_y").unwrap_or(0.0);
-        Self { event_type, id, key, value, x, y, time, section_origin_x, section_origin_y }
+        let pointer_id = get_js_u32(payload, "pointer_id");
+        Self {
+            event_type,
+            id,
+            key,
+            value,
+            x,
+            y,
+            time,
+            section_origin_x,
+            section_origin_y,
+            pointer_id,
+        }
     }
 }

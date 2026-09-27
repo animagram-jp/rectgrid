@@ -5,14 +5,16 @@
 // このファイルでは幾何図形(Line/Circle/Ellipse/Polygon)の当たり判定のみを実装する。
 
 use alloc::vec::Vec;
-use core::primitive::{usize, f64};
+use core::primitive::{f64, usize};
+
 use libm;
-use crate::{Point, Unit, Parameter};
+
+use crate::{Parameter, Point, Unit};
 
 /// D次元拡張は、あまり重視せず、難しければ2に固定してもよい。
 pub struct Line<const D: usize> {
     pub start: Point<D>,
-    pub end: Point<D>,
+    pub end:   Point<D>,
 }
 
 /// 線分`line`に対する`point`の相対情報。
@@ -54,11 +56,7 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
     let wy = py - y1;
 
     let length_squared = vx * vx + vy * vy;
-    let t = if length_squared == 0.0 {
-        0.0
-    } else {
-        (wx * vx + wy * vy) / length_squared
-    };
+    let t = if length_squared == 0.0 { 0.0 } else { (wx * vx + wy * vy) / length_squared };
 
     let proj_x = x1 + t * vx;
     let proj_y = y1 + t * vy;
@@ -72,8 +70,8 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
     let sign = if cross < 0.0 { -1.0 } else { 1.0 };
 
     PointOnGeometry {
-        t: Parameter::new(t),
-        projected: [Unit::new(proj_x), Unit::new(proj_y)],
+        t:               Parameter::new(t),
+        projected:       [Unit::new(proj_x), Unit::new(proj_y)],
         signed_distance: Unit::new(sign * distance),
     }
 }
@@ -130,7 +128,8 @@ impl Circle<2> {
         let center_x = (a_sq * (by - cy) + b_sq * (cy - ay) + c_sq * (ay - by)) / denominator;
         let center_y = (a_sq * (cx - bx) + b_sq * (ax - cx) + c_sq * (bx - ax)) / denominator;
 
-        let radius = libm::sqrt((center_x - ax) * (center_x - ax) + (center_y - ay) * (center_y - ay));
+        let radius =
+            libm::sqrt((center_x - ax) * (center_x - ax) + (center_y - ay) * (center_y - ay));
 
         Some(Circle {
             center: [Unit::new(center_x), Unit::new(center_y)],
@@ -183,8 +182,8 @@ pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> PointOnGeometry<2> {
     };
 
     PointOnGeometry {
-        t: Parameter::new(t),
-        projected: [Unit::new(proj_x), Unit::new(proj_y)],
+        t:               Parameter::new(t),
+        projected:       [Unit::new(proj_x), Unit::new(proj_y)],
         signed_distance: Unit::new(distance_from_center - radius),
     }
 }
@@ -193,8 +192,8 @@ pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> PointOnGeometry<2> {
 /// （回転した楕円は非対応）。
 pub struct Ellipse<const D: usize> {
     pub center: Point<D>,
-    pub rx: Unit,
-    pub ry: Unit,
+    pub rx:     Unit,
+    pub ry:     Unit,
 }
 
 /// 楕円`ellipse`に対する`point`の相対情報。
@@ -234,8 +233,8 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     if rx == 0.0 || ry == 0.0 {
         let distance = libm::sqrt(raw_dx * raw_dx + raw_dy * raw_dy);
         return PointOnGeometry {
-            t: Parameter::new(libm::atan2(raw_dy, raw_dx)),
-            projected: [Unit::new(cx), Unit::new(cy)],
+            t:               Parameter::new(libm::atan2(raw_dy, raw_dx)),
+            projected:       [Unit::new(cx), Unit::new(cy)],
             signed_distance: Unit::new(distance),
         };
     }
@@ -256,8 +255,8 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     let approx_distance = (libm::sqrt(ellipse_value) - 1.0) * rx.min(ry);
 
     PointOnGeometry {
-        t: Parameter::new(t),
-        projected: [Unit::new(proj_x), Unit::new(proj_y)],
+        t:               Parameter::new(t),
+        projected:       [Unit::new(proj_x), Unit::new(proj_y)],
         signed_distance: Unit::new(approx_distance),
     }
 }
@@ -278,12 +277,7 @@ impl Polygon<2> {
     /// （as_on_polygon側で辺の符号をそのまま採用する）。
     fn edges(&self) -> Vec<Line<2>> {
         let n = self.vertices.len();
-        (0..n)
-            .map(|i| Line {
-                start: self.vertices[i],
-                end: self.vertices[(i + 1) % n],
-            })
-            .collect()
+        (0..n).map(|i| Line { start: self.vertices[i], end: self.vertices[(i + 1) % n] }).collect()
     }
 }
 
@@ -344,10 +338,7 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
 
         let result = as_on_line(
             [Unit::new(px), Unit::new(py)],
-            Line {
-                start: [Unit::new(x1), Unit::new(y1)],
-                end: [Unit::new(x2), Unit::new(y2)],
-            },
+            Line { start: [Unit::new(x1), Unit::new(y1)], end: [Unit::new(x2), Unit::new(y2)] },
         );
 
         // as_on_lineのtはクランプされていないため、ここで[0, 1]にクランプしてから
@@ -357,7 +348,8 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
         let clamped_proj_x = x1 + clamped_t * (x2 - x1);
         let clamped_proj_y = y1 + clamped_t * (y2 - y1);
         let bounded_distance = libm::sqrt(
-            (px - clamped_proj_x) * (px - clamped_proj_x) + (py - clamped_proj_y) * (py - clamped_proj_y),
+            (px - clamped_proj_x) * (px - clamped_proj_x)
+                + (py - clamped_proj_y) * (py - clamped_proj_y),
         );
 
         if best.as_ref().map_or(true, |(d, _, _)| bounded_distance < *d) {
@@ -372,8 +364,8 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
     // あたるため、そのままでは符号が内外と逆になる。ここで反転させる。
     (
         PointOnGeometry {
-            t: nearest.t,
-            projected: nearest.projected,
+            t:               nearest.t,
+            projected:       nearest.projected,
             signed_distance: Unit::new(-nearest.signed_distance.get()),
         },
         edge_index,
@@ -385,15 +377,16 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
 /// - `projected`: 図形上に射影した点そのもの
 /// - `signed_distance`: 図形からの符号付き距離（内側/外側や左右の判定に使う）
 pub struct PointOnGeometry<const D: usize> {
-    pub t: Parameter,
-    pub projected: Point<D>,
+    pub t:               Parameter,
+    pub projected:       Point<D>,
     pub signed_distance: Unit,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     fn p(x: f64, y: f64) -> Point<2> {
         [Unit::new(x), Unit::new(y)]
@@ -466,14 +459,16 @@ mod tests {
 
     #[test]
     fn as_on_ellipse_inside_is_negative() {
-        let ellipse = Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(3.0) };
+        let ellipse =
+            Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(3.0) };
         let result = as_on_ellipse(p(2.0, 0.0), ellipse);
         assert!(result.signed_distance.get() < 0.0);
     }
 
     #[test]
     fn as_on_ellipse_degenerate_ry_zero_falls_back_to_center_distance() {
-        let ellipse = Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(0.0) };
+        let ellipse =
+            Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(0.0) };
         let result = as_on_ellipse(p(3.0, 4.0), ellipse);
         assert_eq!(result.signed_distance.get(), 5.0);
     }
@@ -483,9 +478,8 @@ mod tests {
 
     #[test]
     fn as_on_polygon_inside_is_negative() {
-        let polygon = Polygon {
-            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
-        };
+        let polygon =
+            Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
         let (result, _) = as_on_polygon(p(5.0, 5.0), polygon);
         assert!(result.signed_distance.get() < 0.0);
     }
@@ -503,7 +497,8 @@ mod tests {
     fn as_on_polygon_cw_inverts_sign() {
         // 頂点列はCCW規約。同じ四角形をCW（逆順）で与えると、規約違反により
         // signed_distanceの符号が反転することの確認（内側点なのに正になる）。
-        let ccw = Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
+        let ccw =
+            Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
         let cw = Polygon { vertices: vec![p(0.0, 0.0), p(0.0, 10.0), p(10.0, 10.0), p(10.0, 0.0)] };
         let inside = p(5.0, 5.0);
         let (result_ccw, _) = as_on_polygon(inside, ccw);
@@ -516,9 +511,8 @@ mod tests {
     fn as_on_polygon_returns_nearest_edge_index() {
         // 三角形(0,0),(10,0),(10,10),(0,10)四角形の底辺(index 0)寄りの外部点は
         // edge_index=0を返すはず。
-        let polygon = Polygon {
-            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
-        };
+        let polygon =
+            Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
         let (_, edge_index) = as_on_polygon(p(5.0, -2.0), polygon);
         assert_eq!(edge_index, 0);
     }

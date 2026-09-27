@@ -1,7 +1,15 @@
 use alloc::vec::Vec;
 use core::array::from_fn;
-use crate::js_client::{Command, EventType, Gesture, CanvasEvent, PointerState, dom::{Id, Tag}};
-use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test, drag_resize, drag_translate, snap_region_to_unit, snap_point_to_unit};
+
+use rectgrid::{
+    BBox, IncrementFunction, Px, RectGrid, Unit, corner_test, drag_resize, drag_translate,
+    snap_point_to_unit, snap_region_to_unit,
+};
+
+use crate::js_client::{
+    CanvasEvent, Command, EventType, Gesture, PointerState,
+    dom::{Id, Tag},
+};
 
 // ============================================================
 // Event
@@ -22,20 +30,25 @@ pub enum Event {
 // Grid constants
 // ============================================================
 
-const X_COLS:             u32 = 5;    // x方向の分割数
-const Y_UNIT_REM:         f64 = 4.0;  // y方向1マスのrem数
-const REM_PX:             f64 = 16.0; // 1rem = 16px 基準
-const SECTION_PADDING_PX: f64 = 0.0;  // viewport左端から#section内側までの水平余白合計
+const X_COLS: u32 = 5; // x方向の分割数
+const Y_UNIT_REM: f64 = 4.0; // y方向1マスのrem数
+const REM_PX: f64 = 16.0; // 1rem = 16px 基準
+const SECTION_PADDING_PX: f64 = 0.0; // viewport左端から#section内側までの水平余白合計
 
 // ============================================================
 // Handler
 // ============================================================
 
 pub struct Handler {
-    articles:         Vec<(u32, BBox<2>)>,      // (article番号, BBox)。末尾が最前面・hit優先
-    drag_target:      Option<u32>,               // article番号
+    articles:         Vec<(u32, BBox<2>)>, // (article番号, BBox)。末尾が最前面・hit優先
+    drag_target:      Option<u32>,         // article番号
     drag_corner:      Option<[Option<bool>; 2]>, // 面積持ちarticleの角/辺ドラッグ: Some(true)=base側, Some(false)=offset側, None=軸ロック
-    drag_pointer:     [f64; 2],                  // Drag中の最終raw viewport座標(DragEndのsnap_*呼び出し用)
+    drag_pointer:     [f64; 2], // Drag中の最終raw viewport座標(DragEndのsnap_*呼び出し用)
+    // PointerDown時の(pointer_px - カード左上px)。TouchTrackerが複数指を
+    // PointerStateでまとめて追跡するため、ドラッグ対象固有のこの値は
+    // PointerStateではなくここに持つ。
+    drag_offset:      (f64, f64),
+    drag_px:          (f64, f64), // Drag中のカード左上px座標(一時)
     rectgrid:         RectGrid<2>,
     section_width_px: f64,
 }
@@ -46,31 +59,32 @@ impl Handler {
         let x_unit = section_width_px / X_COLS as f64;
         let y_unit = Y_UNIT_REM * REM_PX;
         Self {
-            articles:     alloc::vec![
-                              (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
-                              (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
-                              (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)])),
-                              (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)])),
-                          ],
-            drag_target:  None,
-            drag_corner:  None,
+            articles: alloc::vec![
+                (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
+                (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
+                (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)])),
+                (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)])),
+            ],
+            drag_target: None,
+            drag_corner: None,
             drag_pointer: [0.0; 2],
-            rectgrid:     RectGrid::new(
-                              [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])],
-                              [IncrementFunction::Scale(x_unit), IncrementFunction::Scale(y_unit)],
-                          ).unwrap(),
+            drag_offset: (0.0, 0.0),
+            drag_px: (0.0, 0.0),
+            rectgrid: RectGrid::new(
+                [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])],
+                [IncrementFunction::Scale(x_unit), IncrementFunction::Scale(y_unit)],
+            )
+            .unwrap(),
             section_width_px,
         }
     }
     pub fn close(&self) {}
 
     pub fn initial_draw(&mut self) -> (Vec<Event>, Vec<Command>) {
-        let mut cmds: Vec<Command> = vec![
-            Command::RemoveAttribute {
-                id:        Id::new(&[(Tag::Body, None)]).encode(),
-                attribute: "hidden".to_string(),
-            },
-        ];
+        let mut cmds: Vec<Command> = vec![Command::RemoveAttribute {
+            id:        Id::new(&[(Tag::Body, None)]).encode(),
+            attribute: "hidden".to_string(),
+        }];
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
         let resolved = self.rectgrid.box_as_px(&boxes);
         for (z, ((n, bx), px_result)) in self.articles.iter().zip(resolved).enumerate() {
@@ -78,8 +92,14 @@ impl Handler {
             if let Ok((base_px, offset_px)) = px_result {
                 cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
                 if bx.has_size() {
-                    cmds.push(Command::SetWidth  { id: article.encode(), px: offset_px[0].get() as u32 });
-                    cmds.push(Command::SetHeight { id: article.encode(), px: offset_px[1].get() as u32 });
+                    cmds.push(Command::SetWidth {
+                        id: article.encode(),
+                        px: offset_px[0].get() as u32,
+                    });
+                    cmds.push(Command::SetHeight {
+                        id: article.encode(),
+                        px: offset_px[1].get() as u32,
+                    });
                 }
             }
             cmds.push(Command::SetZIndex { id: article.encode(), z: z as i32 });
@@ -88,14 +108,24 @@ impl Handler {
         (vec![], cmds)
     }
 
-    pub fn process(&mut self, event: &CanvasEvent, pointer_state: &mut PointerState) -> (Vec<Event>, Vec<Command>) {
+    pub fn process(
+        &mut self,
+        event: &CanvasEvent,
+        _state: &PointerState,
+    ) -> (Vec<Event>, Vec<Command>) {
         match &event.event_type {
-            EventType::Resize => (vec![Event::Rectgrid(RectgridEvent::Resize {
-                width_px:          event.x,
-                section_origin_px: [event.section_origin_x, event.section_origin_y],
-            })], vec![]),
+            EventType::Resize => (
+                vec![Event::Rectgrid(RectgridEvent::Resize {
+                    width_px:          event.x,
+                    section_origin_px: [event.section_origin_x, event.section_origin_y],
+                })],
+                vec![],
+            ),
             EventType::PointerDown => {
-                let extend = Some(([Unit::new(-0.05), Unit::new(-0.05)], [Unit::new(0.05), Unit::new(0.05)]));
+                let extend = Some((
+                    [Unit::new(-0.05), Unit::new(-0.05)],
+                    [Unit::new(0.05), Unit::new(0.05)],
+                ));
                 const CORNER_THRESHOLD: f64 = 0.1;
                 let point = [Px::new(event.x), Px::new(event.y)];
                 // articles末尾から走査し、extendありhit_testでfirst hitを採用
@@ -105,8 +135,13 @@ impl Handler {
                 // 角判定を最優先、次いでDOM hit、最後にBBox内部hit
                 self.drag_corner = None;
                 let corner: Option<[Option<bool>; 2]> = hit_i.and_then(|i| {
-                    let (parameter, corner) = corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD);
-                    crate::debug_log!("rectgrid parameter: {:?}, corner: {:?}", parameter.map(|r| r.map(|p| p.get())), corner);
+                    let (parameter, corner) =
+                        corner_test(&self.rectgrid, point, &boxes[i], CORNER_THRESHOLD);
+                    crate::debug_log!(
+                        "rectgrid parameter: {:?}, corner: {:?}",
+                        parameter.map(|r| r.map(|p| p.get())),
+                        corner
+                    );
                     corner
                 });
                 let target = if corner.is_some() {
@@ -119,9 +154,11 @@ impl Handler {
                 if let Some(idx) = target {
                     if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == idx) {
                         if self.drag_corner.is_none() {
-                            let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0)));
+                            let base_px: [Px; 2] = from_fn(|d| {
+                                self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0))
+                            });
                             let offset = self.rectgrid.offset(point, base_px);
-                            pointer_state.drag_offset = (offset[0].get(), offset[1].get());
+                            self.drag_offset = (offset[0].get(), offset[1].get());
                         }
                     }
                     // drag開始時点で対象を最前面z-indexに
@@ -130,32 +167,41 @@ impl Handler {
                     cmds.push(Command::SetZIndex { id: article.encode(), z: top_z as i32 });
                     if let Some(cursor) = corner_cursor(self.drag_corner) {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::SetCursor { id: section.encode(), value: cursor.to_string() });
+                        cmds.push(Command::SetCursor {
+                            id:    section.encode(),
+                            value: cursor.to_string(),
+                        });
                     }
                 }
                 self.drag_target = target;
                 (vec![], cmds)
             }
-            EventType::KeyDown  => todo!("keydown"),
-            EventType::Input    => todo!("input"),
-            EventType::Change   => todo!("change"),
+            EventType::KeyDown => todo!("keydown"),
+            EventType::Input => todo!("input"),
+            EventType::Change => todo!("change"),
             EventType::FocusOut => todo!("focusout"),
-            EventType::Submit   => todo!("submit"),
-            _                   => (vec![], vec![]),
+            EventType::Submit => todo!("submit"),
+            _ => (vec![], vec![]),
         }
     }
 
-    pub fn process_gesture(&mut self, gesture: &Gesture, pointer_state: &mut PointerState) -> (Vec<Event>, Vec<Command>) {
+    pub fn process_gesture(
+        &mut self,
+        gesture: &Gesture,
+        _state: &PointerState,
+    ) -> (Vec<Event>, Vec<Command>) {
         match gesture {
             Gesture::Drag { x, y } => {
                 let pointer = [Px::new(*x), Px::new(*y)];
                 self.drag_pointer = [*x, *y];
-                let Some(idx) = self.drag_target else { return (vec![], vec![]); };
+                let Some(idx) = self.drag_target else {
+                    return (vec![], vec![]);
+                };
                 let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) else {
                     return (vec![], vec![]);
                 };
                 let bx = &mut pos.1;
-                let drag_offset = [Px::new(pointer_state.drag_offset.0), Px::new(pointer_state.drag_offset.1)];
+                let drag_offset = [Px::new(self.drag_offset.0), Px::new(self.drag_offset.1)];
                 if bx.has_size() {
                     if let Some(corner) = self.drag_corner {
                         // 角ハンドル: ポインタ絶対座標(viewport)からunit座標を求め、各軸のbase/offsetを動かす
@@ -163,14 +209,26 @@ impl Handler {
                             return (vec![], vec![]);
                         };
                         *bx = new_bx;
-                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
+                        let base_px: [Px; 2] = from_fn(|d| {
+                            self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0))
+                        });
                         let size_px: [Px; 2] = from_fn(|d| {
-                            self.rectgrid.unit_to_px(d, &(new_bx.base()[d] + new_bx.offset()[d])).unwrap_or(Px::new(0.0)) - base_px[d]
+                            self.rectgrid
+                                .unit_to_px(d, &(new_bx.base()[d] + new_bx.offset()[d]))
+                                .unwrap_or(Px::new(0.0))
+                                - base_px[d]
                         });
                         let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
-                        let mut cmds = vec![translate_card(idx, base_px[0].get(), base_px[1].get())];
-                        cmds.push(Command::SetWidth  { id: article.encode(), px: size_px[0].get() as u32 });
-                        cmds.push(Command::SetHeight { id: article.encode(), px: size_px[1].get() as u32 });
+                        let mut cmds =
+                            vec![translate_card(idx, base_px[0].get(), base_px[1].get())];
+                        cmds.push(Command::SetWidth {
+                            id: article.encode(),
+                            px: size_px[0].get() as u32,
+                        });
+                        cmds.push(Command::SetHeight {
+                            id: article.encode(),
+                            px: size_px[1].get() as u32,
+                        });
                         return (vec![], cmds);
                     }
                     // 移動ドラッグ: BBoxはUnit座標のまま維持し、DragEndでスナップ
@@ -179,7 +237,7 @@ impl Handler {
                 } else {
                     // 点BBox: 移動中の描画位置のみ更新
                     let px = drag_translate(&self.rectgrid, pointer, drag_offset);
-                    pointer_state.drag_px = (px[0].get(), px[1].get());
+                    self.drag_px = (px[0].get(), px[1].get());
                     (vec![], vec![translate_card(idx, px[0].get(), px[1].get())])
                 }
             }
@@ -188,27 +246,55 @@ impl Handler {
                 if let Some(idx) = self.drag_target {
                     if self.drag_corner.is_some() {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::SetCursor { id: section.encode(), value: String::new() });
+                        cmds.push(Command::SetCursor {
+                            id:    section.encode(),
+                            value: String::new(),
+                        });
                     }
                     if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
                         let bx = &mut pos.1;
-                        let drag_pointer = [Px::new(self.drag_pointer[0]), Px::new(self.drag_pointer[1])];
-                        let drag_offset  = [Px::new(pointer_state.drag_offset.0), Px::new(pointer_state.drag_offset.1)];
+                        let drag_pointer =
+                            [Px::new(self.drag_pointer[0]), Px::new(self.drag_pointer[1])];
+                        let drag_offset =
+                            [Px::new(self.drag_offset.0), Px::new(self.drag_offset.1)];
                         if bx.has_size() {
                             if self.drag_corner.is_none() {
                                 // 移動ドラッグ: base を Unit格子にスナップ
-                                if let Ok(new_bx) = snap_region_to_unit(&self.rectgrid, drag_pointer, drag_offset, bx, Some([Unit::new(0.25), Unit::new(0.25)])) {
+                                if let Ok(new_bx) = snap_region_to_unit(
+                                    &self.rectgrid,
+                                    drag_pointer,
+                                    drag_offset,
+                                    bx,
+                                    Some([Unit::new(0.25), Unit::new(0.25)]),
+                                ) {
                                     *bx = new_bx;
-                                    let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
-                                    cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
+                                    let base_px: [Px; 2] = from_fn(|d| {
+                                        self.rectgrid
+                                            .unit_to_px(d, &new_bx.base()[d])
+                                            .unwrap_or(Px::new(0.0))
+                                    });
+                                    cmds.push(translate_card(
+                                        idx,
+                                        base_px[0].get(),
+                                        base_px[1].get(),
+                                    ));
                                 }
                             }
                             // 角ハンドルはDrag中に既にUnit確定済み
                         } else {
                             // 点BBox: drag_pointerからUnit格子にスナップ
-                            if let Ok(new_bx) = snap_point_to_unit(&self.rectgrid, drag_pointer, drag_offset, [Unit::new(0.25), Unit::new(0.25)]) {
+                            if let Ok(new_bx) = snap_point_to_unit(
+                                &self.rectgrid,
+                                drag_pointer,
+                                drag_offset,
+                                [Unit::new(0.25), Unit::new(0.25)],
+                            ) {
                                 *bx = new_bx;
-                                let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &new_bx.base()[d]).unwrap_or(Px::new(0.0)));
+                                let base_px: [Px; 2] = from_fn(|d| {
+                                    self.rectgrid
+                                        .unit_to_px(d, &new_bx.base()[d])
+                                        .unwrap_or(Px::new(0.0))
+                                });
                                 cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
                             }
                         }
@@ -218,8 +304,12 @@ impl Handler {
                         let entry = self.articles.remove(old_pos);
                         self.articles.push(entry);
                         for (new_z, (n, _)) in self.articles[old_pos..].iter().enumerate() {
-                            let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                            cmds.push(Command::SetZIndex { id: article.encode(), z: (old_pos + new_z) as i32 });
+                            let article =
+                                Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
+                            cmds.push(Command::SetZIndex {
+                                id: article.encode(),
+                                z:  (old_pos + new_z) as i32,
+                            });
                         }
                     }
                 }
@@ -238,18 +328,33 @@ impl Handler {
                 if let Some(idx) = self.drag_target {
                     if self.drag_corner.is_some() {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::SetCursor { id: section.encode(), value: String::new() });
+                        cmds.push(Command::SetCursor {
+                            id:    section.encode(),
+                            value: String::new(),
+                        });
                     }
                     if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == idx) {
-                        let base_px: [Px; 2] = from_fn(|d| self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0)));
+                        let base_px: [Px; 2] = from_fn(|d| {
+                            self.rectgrid.unit_to_px(d, &bx.base()[d]).unwrap_or(Px::new(0.0))
+                        });
                         cmds.push(translate_card(idx, base_px[0].get(), base_px[1].get()));
                         if bx.has_size() {
                             let size_px: [Px; 2] = from_fn(|d| {
-                                self.rectgrid.unit_to_px(d, &(bx.base()[d] + bx.offset()[d])).unwrap_or(Px::new(0.0)) - base_px[d]
+                                self.rectgrid
+                                    .unit_to_px(d, &(bx.base()[d] + bx.offset()[d]))
+                                    .unwrap_or(Px::new(0.0))
+                                    - base_px[d]
                             });
-                            let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
-                            cmds.push(Command::SetWidth  { id: article.encode(), px: size_px[0].get() as u32 });
-                            cmds.push(Command::SetHeight { id: article.encode(), px: size_px[1].get() as u32 });
+                            let article =
+                                Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
+                            cmds.push(Command::SetWidth {
+                                id: article.encode(),
+                                px: size_px[0].get() as u32,
+                            });
+                            cmds.push(Command::SetHeight {
+                                id: article.encode(),
+                                px: size_px[1].get() as u32,
+                            });
                         }
                     }
                 }
@@ -266,8 +371,11 @@ impl Handler {
             RectgridEvent::Resize { width_px, section_origin_px } => {
                 let section_width_px = width_px - SECTION_PADDING_PX;
                 self.section_width_px = section_width_px;
-                let _ = self.rectgrid.set_definition(IncrementFunction::Scale(section_width_px / X_COLS as f64), 0);
-                self.rectgrid.origin = [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])];
+                let _ = self
+                    .rectgrid
+                    .set_definition(IncrementFunction::Scale(section_width_px / X_COLS as f64), 0);
+                self.rectgrid.origin =
+                    [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])];
                 let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
                 let resolved = self.rectgrid.box_as_px(&boxes);
                 let mut cmds = vec![grid_background_cmd(section_width_px)];
@@ -276,8 +384,14 @@ impl Handler {
                     cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
                     if bx.has_size() {
                         let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                        cmds.push(Command::SetWidth  { id: article.encode(), px: offset_px[0].get() as u32 });
-                        cmds.push(Command::SetHeight { id: article.encode(), px: offset_px[1].get() as u32 });
+                        cmds.push(Command::SetWidth {
+                            id: article.encode(),
+                            px: offset_px[0].get() as u32,
+                        });
+                        cmds.push(Command::SetHeight {
+                            id: article.encode(),
+                            px: offset_px[1].get() as u32,
+                        });
                     }
                 }
                 (vec![], cmds)
@@ -317,7 +431,9 @@ fn translate_card(n: u32, x: f64, y: f64) -> Command {
 /// 異なる側(右上・左下)ならnesw。片軸のみSomeの辺ハンドルはその軸方向(ew/ns)を返す。
 fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<&'static str> {
     match corner? {
-        [Some(x_side), Some(y_side)] => Some(if x_side == y_side { "nwse-resize" } else { "nesw-resize" }),
+        [Some(x_side), Some(y_side)] => {
+            Some(if x_side == y_side { "nwse-resize" } else { "nesw-resize" })
+        }
         [Some(_), None] => Some("ew-resize"),
         [None, Some(_)] => Some("ns-resize"),
         [None, None] => None,
@@ -327,7 +443,5 @@ fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<&'static str> {
 /// イベントターゲットIDからarticle番号を抽出する
 /// section_article-N_... の形式で、article セグメントの番号を返す
 fn article_index_at(id: &Id) -> Option<u32> {
-    id.0.iter().find_map(|seg| {
-        if matches!(seg.tag, Tag::Article) { seg.n } else { None }
-    })
+    id.0.iter().find_map(|seg| if matches!(seg.tag, Tag::Article) { seg.n } else { None })
 }
