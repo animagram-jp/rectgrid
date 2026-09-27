@@ -22,12 +22,15 @@ self.addEventListener("message", async (e) => {
 
     if (!app) return;
 
-    if (type === "close") { app.close(); self.close(); return; }
-
     if (type !== "event") return;
 
     const commands = app.process(payload);
     if (commands?.length) self.postMessage({ type: "execute", payload: Array.from(commands) });
+
+    // shutdownはCanvasイベントと同じ経路(App::process)で処理させたうえで、
+    // JS側はここでworkerを終了する(app repositoryのEVENT_SHUTDOWNと同様、
+    // 終了そのものはWasm側では行わない)。
+    if (payload.event_type === "shutdown") self.close();
 });
 
 self.addEventListener("error", (e) => {

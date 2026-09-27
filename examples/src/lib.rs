@@ -10,12 +10,17 @@ pub mod app;
 // Global Allocator
 // ============================================================
 
-#[cfg(target_arch = "wasm32")]
-use dlmalloc::GlobalDlmalloc;
+// app repositoryと同じtalcを使う。examplesはシングルスレッド
+// (SharedArrayBuffer/atomics不使用)なので、ロックを要さないwasm向けの
+// Cellベース実装 (WasmDynamicTalc) で足りる。app repositoryが
+// worker+共有メモリ用に使うTalcLock<spinning_top::RawSpinlock, ...>は
+// ここでは不要。
+#[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
+use talc::wasm::{WasmDynamicTalc, new_wasm_dynamic_allocator};
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
 #[global_allocator]
-static ALLOCATOR: GlobalDlmalloc = GlobalDlmalloc;
+static ALLOCATOR: WasmDynamicTalc = new_wasm_dynamic_allocator();
 
 // ============================================================
 // log

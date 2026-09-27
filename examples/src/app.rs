@@ -39,26 +39,43 @@ impl App {
         app
     }
 
-    pub fn close(&self) {
-        self.handler.close();
-    }
-
+    /// app repositoryのApp::closeは、EVENT_SHUTDOWNが他のCanvasイベントと
+    /// 同じ経路(App::process)を通るようになった際に不要となり削除された
+    /// (Handler::closeはEvent::Shutdownのdispatch先として残る)。
+    /// rectgrid examplesもJSON側の"shutdown" event_typeを同じ経路に流す
+    /// ため、ここに対応するpublicメソッドは無い。
     pub fn process(&mut self, payload: JsValue) -> JsValue {
         let mut commands = Vec::new();
         let canvas_event = CanvasEvent::decode(&payload);
-        match self.touch.handle(
-            &canvas_event.event_type,
-            canvas_event.pointer_id,
-            canvas_event.x,
-            canvas_event.y,
-            canvas_event.time,
-            &self.thresholds,
-        ) {
-            Some(gesture) => self.events.push(Event::Gesture(gesture)),
-            None => match &canvas_event.event_type {
-                EventType::PointerDown => self.events.push(Event::Canvas(canvas_event)),
-                EventType::PointerMove | EventType::PointerUp | EventType::PointerCancel => {}
-                _ => self.events.push(Event::Canvas(canvas_event)),
+        // Resize/Scroll/Shutdownはapp repositoryでは独立したフレーム種別
+        // (CanvasEventを経由しない)なので、ここでもタッチ判定に回さず
+        // 先に振り分ける。
+        match canvas_event.event_type {
+            EventType::Resize => self.events.push(Event::Resize {
+                width:          canvas_event.x,
+                height:         canvas_event.y,
+                section_origin: [canvas_event.section_origin_x, canvas_event.section_origin_y],
+            }),
+            EventType::Scroll => self.events.push(Event::Scroll {
+                id: canvas_event.id,
+                x:  canvas_event.x,
+                y:  canvas_event.y,
+            }),
+            EventType::Shutdown => self.events.push(Event::Shutdown),
+            _ => match self.touch.handle(
+                &canvas_event.event_type,
+                canvas_event.pointer_id,
+                canvas_event.x,
+                canvas_event.y,
+                canvas_event.time,
+                &self.thresholds,
+            ) {
+                Some(gesture) => self.events.push(Event::Gesture(gesture)),
+                None => match canvas_event.event_type {
+                    EventType::PointerDown => self.events.push(Event::Canvas(canvas_event)),
+                    EventType::PointerMove | EventType::PointerUp | EventType::PointerCancel => {}
+                    _ => self.events.push(Event::Canvas(canvas_event)),
+                },
             },
         }
         while let Some(event) = self.events.pop() {
@@ -77,7 +94,11 @@ impl App {
             Event::Ready => handler.initial_draw(),
             Event::Canvas(e) => handler.process(&e, touch.active_state()),
             Event::Gesture(g) => handler.process_gesture(&g, touch.active_state()),
-            Event::Rectgrid(e) => handler.process_rectgrid(&e),
+            Event::Resize { width, section_origin, .. } => {
+                handler.process_viewport(width, section_origin)
+            }
+            Event::Scroll { id, x, y } => handler.process_scroll(&id, x, y),
+            Event::Shutdown => (vec![], handler.close()),
         }
     }
 }

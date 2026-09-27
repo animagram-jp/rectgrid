@@ -7,23 +7,40 @@ use rectgrid::{
 };
 
 use crate::js_client::{
-    CanvasEvent, Command, EventType, Gesture, PointerState,
+    Attribute, CanvasEvent, Command, CursorValue, EventType, Gesture, PointerState,
     dom::{Id, Tag},
 };
 
 // ============================================================
 // Event
 // ============================================================
-
-pub enum RectgridEvent {
-    Resize { width_px: f64, section_origin_px: [f64; 2] },
-}
+//
+// app repositoryのEvent(Canvas/Gesture/Resize/Scroll/Shutdown)に構造を
+// 揃える。Readyのみapp repositoryには無い追加: appはWasmから任意時点で
+// JSへcommandをpushできる(SharedArrayBuffer + arena)ため、App::init内で
+// initial_drawを直接呼べる。rectgrid examplesはJSON/postMessageで
+// Wasm→JSの呼び出しが無く、JS側のApp::process呼び出しへ応答する形でしか
+// commandを返せないため、初回のprocess呼び出しで初期描画を行わせる
+// ためのイベントとして残している。
 
 pub enum Event {
     Ready,
     Canvas(CanvasEvent),
     Gesture(Gesture),
-    Rectgrid(RectgridEvent),
+    /// app repositoryと同じ`{width, height}`に加え、section要素の
+    /// viewport原点(`section_origin`)を持つ。rectgridのグリッド座標変換に
+    /// 必要なため、rectgrid examples固有の追加フィールドとして持たせる。
+    Resize {
+        width:          f64,
+        height:         f64,
+        section_origin: [f64; 2],
+    },
+    Scroll {
+        id: Id,
+        x:  f64,
+        y:  f64,
+    },
+    Shutdown,
 }
 
 // ============================================================
@@ -78,12 +95,14 @@ impl Handler {
             section_width_px,
         }
     }
-    pub fn close(&self) {}
+    pub fn close(&self) -> Vec<Command> {
+        vec![]
+    }
 
     pub fn initial_draw(&mut self) -> (Vec<Event>, Vec<Command>) {
         let mut cmds: Vec<Command> = vec![Command::RemoveAttribute {
             id:        Id::new(&[(Tag::Body, None)]).encode(),
-            attribute: "hidden".to_string(),
+            attribute: Attribute::Hidden,
         }];
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
         let resolved = self.rectgrid.box_as_px(&boxes);
@@ -114,13 +133,6 @@ impl Handler {
         _state: &PointerState,
     ) -> (Vec<Event>, Vec<Command>) {
         match &event.event_type {
-            EventType::Resize => (
-                vec![Event::Rectgrid(RectgridEvent::Resize {
-                    width_px:          event.x,
-                    section_origin_px: [event.section_origin_x, event.section_origin_y],
-                })],
-                vec![],
-            ),
             EventType::PointerDown => {
                 let extend = Some((
                     [Unit::new(-0.05), Unit::new(-0.05)],
@@ -167,10 +179,7 @@ impl Handler {
                     cmds.push(Command::SetZIndex { id: article.encode(), z: top_z as i32 });
                     if let Some(cursor) = corner_cursor(self.drag_corner) {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::SetCursor {
-                            id:    section.encode(),
-                            value: cursor.to_string(),
-                        });
+                        cmds.push(Command::SetCursor { id: section.encode(), value: cursor });
                     }
                 }
                 self.drag_target = target;
@@ -248,7 +257,7 @@ impl Handler {
                         let section = Id::new(&[(Tag::Section, None)]);
                         cmds.push(Command::SetCursor {
                             id:    section.encode(),
-                            value: String::new(),
+                            value: CursorValue::Unset,
                         });
                     }
                     if let Some(pos) = self.articles.iter_mut().find(|(n, _)| *n == idx) {
@@ -330,7 +339,7 @@ impl Handler {
                         let section = Id::new(&[(Tag::Section, None)]);
                         cmds.push(Command::SetCursor {
                             id:    section.encode(),
-                            value: String::new(),
+                            value: CursorValue::Unset,
                         });
                     }
                     if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == idx) {
@@ -366,37 +375,45 @@ impl Handler {
         }
     }
 
-    pub fn process_rectgrid(&mut self, event: &RectgridEvent) -> (Vec<Event>, Vec<Command>) {
-        match event {
-            RectgridEvent::Resize { width_px, section_origin_px } => {
-                let section_width_px = width_px - SECTION_PADDING_PX;
-                self.section_width_px = section_width_px;
-                let _ = self
-                    .rectgrid
-                    .set_definition(IncrementFunction::Scale(section_width_px / X_COLS as f64), 0);
-                self.rectgrid.origin =
-                    [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])];
-                let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
-                let resolved = self.rectgrid.box_as_px(&boxes);
-                let mut cmds = vec![grid_background_cmd(section_width_px)];
-                for ((n, bx), px_result) in self.articles.iter().zip(resolved) {
-                    let Ok((base_px, offset_px)) = px_result else { continue };
-                    cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
-                    if bx.has_size() {
-                        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                        cmds.push(Command::SetWidth {
-                            id: article.encode(),
-                            px: offset_px[0].get() as u32,
-                        });
-                        cmds.push(Command::SetHeight {
-                            id: article.encode(),
-                            px: offset_px[1].get() as u32,
-                        });
-                    }
-                }
-                (vec![], cmds)
+    /// viewportのresizeを反映する。app repositoryの`process_viewport`と
+    /// 同じ役割だが、rectgridはグリッドの再計算にsection要素のviewport
+    /// 原点(`section_origin_px`)も必要とするため引数に持つ。
+    pub fn process_viewport(
+        &mut self,
+        width_px: f64,
+        section_origin_px: [f64; 2],
+    ) -> (Vec<Event>, Vec<Command>) {
+        let section_width_px = width_px - SECTION_PADDING_PX;
+        self.section_width_px = section_width_px;
+        let _ = self
+            .rectgrid
+            .set_definition(IncrementFunction::Scale(section_width_px / X_COLS as f64), 0);
+        self.rectgrid.origin = [Px::new(section_origin_px[0]), Px::new(section_origin_px[1])];
+        let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
+        let resolved = self.rectgrid.box_as_px(&boxes);
+        let mut cmds = vec![grid_background_cmd(section_width_px)];
+        for ((n, bx), px_result) in self.articles.iter().zip(resolved) {
+            let Ok((base_px, offset_px)) = px_result else { continue };
+            cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
+            if bx.has_size() {
+                let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
+                cmds.push(Command::SetWidth {
+                    id: article.encode(),
+                    px: offset_px[0].get() as u32,
+                });
+                cmds.push(Command::SetHeight {
+                    id: article.encode(),
+                    px: offset_px[1].get() as u32,
+                });
             }
         }
+        (vec![], cmds)
+    }
+
+    /// app repositoryと同じスタブ。rectgrid examplesのデモはscrollに反応
+    /// しない。
+    pub fn process_scroll(&mut self, _id: &Id, _x: f64, _y: f64) -> (Vec<Event>, Vec<Command>) {
+        (vec![], vec![])
     }
 }
 
@@ -429,13 +446,13 @@ fn translate_card(n: u32, x: f64, y: f64) -> Command {
 /// resizeハンドル対象のcorner([x_side, y_side], Some(true)=base側/Some(false)=offset側, None=非該当)から
 /// CSSのresizeカーソル種別を求める。両軸Someの角ハンドルはx_side/y_sideが同じ側(左上・右下)ならnwse、
 /// 異なる側(右上・左下)ならnesw。片軸のみSomeの辺ハンドルはその軸方向(ew/ns)を返す。
-fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<&'static str> {
+fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<CursorValue> {
     match corner? {
         [Some(x_side), Some(y_side)] => {
-            Some(if x_side == y_side { "nwse-resize" } else { "nesw-resize" })
+            Some(if x_side == y_side { CursorValue::NwseResize } else { CursorValue::NeswResize })
         }
-        [Some(_), None] => Some("ew-resize"),
-        [None, Some(_)] => Some("ns-resize"),
+        [Some(_), None] => Some(CursorValue::EwResize),
+        [None, Some(_)] => Some(CursorValue::NsResize),
         [None, None] => None,
     }
 }

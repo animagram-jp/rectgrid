@@ -20,7 +20,7 @@ serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-dlmalloc  = { version = "0.2", features = ["global"] }
+talc = { version = "5.1", default-features = false }
 
 [features]
 default    = []

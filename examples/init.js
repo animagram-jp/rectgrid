@@ -67,25 +67,45 @@ function execute(cmd) {
     switch (cmd.operation) {
         case 1:  el.textContent = cmd.value ?? ""; break;
         case 2:  el.value = cmd.value ?? ""; break;
-        case 3:  el.setAttribute(cmd.attribute, cmd.value ?? ""); break;
-        case 4:  el.removeAttribute(cmd.attribute); break;
-        case 5:  el.classList.add(cmd.value); break;
-        case 6:  el.classList.remove(cmd.value); break;
+        case 3:  el.setAttribute(ATTRIBUTES[cmd.attribute], cmd.value ?? ""); break;
+        case 4:  el.removeAttribute(ATTRIBUTES[cmd.attribute]); break;
+        case 5:  el.classList.add(CLASS_NAMES[cmd.value]); break;
+        case 6:  el.classList.remove(CLASS_NAMES[cmd.value]); break;
         case 7:  el.style.width = cmd.px + "px"; break;
         case 8:  el.style.height = cmd.px + "px"; break;
         case 9:  el.style.zIndex = cmd.z; break;
         case 10: el.style.background = cmd.value; break;
         case 11: el.style.translate = `${cmd.x}px ${cmd.y}px`; break;
-        case 12: el.style.cursor = cmd.value ?? ""; break;
+        case 12: el.style.cursor = CURSOR_VALUES[cmd.value] ?? ""; break;
         case 13: el.showModal(); break;
         case 14: el.close(); break;
         case 15: el.focus(); break;
-        case 16: js_fn[cmd.name]?.(el); break;
+        case 16: js_fn[FN_NAMES[cmd.name]]?.(el); break;
     }
 }
 
+/**
+ *  js_client.rs:Attribute の index。HTML属性名。
+ */
+const ATTRIBUTES = ["disabled", "hidden"];
+
+/**
+ *  js_client.rs:ClassName の index。CSSクラス名。
+ */
+const CLASS_NAMES = ["hide", "show", "hidden"];
+
+/**
+ *  js_client.rs:CursorValue の index。CSS `cursor` の値。
+ */
+const CURSOR_VALUES = ["default", "grab", "", "nwse-resize", "nesw-resize", "ew-resize", "ns-resize"];
+
+/**
+ *  js_client.rs:FnName の index。
+ */
+const FN_NAMES = ["hide_toast", "show_toast"];
+
 const js_fn = {
-    show: (el) => {
+    show_toast: (el) => {
         el.classList.remove("hidden");
         requestAnimationFrame(() => requestAnimationFrame(() => {
             el.classList.add("show");
@@ -95,7 +115,7 @@ const js_fn = {
             }, 3000);
         }));
     },
-    hide: (el) => {
+    hide_toast: (el) => {
         el.classList.replace("show", "hide");
         el.addEventListener("transitionend", () => el.classList.remove("hide"), { once: true });
     },
@@ -148,7 +168,17 @@ function bind() {
         }, 100);
     });
 
+    window.addEventListener("scroll", (e) => {
+        worker.postMessage({ type: "event", payload: {
+            event_type: "scroll",
+            target_id:  e.target?.id ?? "",
+            x:          window.scrollX,
+            y:          window.scrollY,
+        }});
+    }, { passive: true });
+
     window.addEventListener("pagehide", (e) => {
-        if (!e.persisted) worker.postMessage({ type: "close" });
+        if (e.persisted) return;
+        worker.postMessage({ type: "event", payload: { event_type: "shutdown" } });
     });
 }

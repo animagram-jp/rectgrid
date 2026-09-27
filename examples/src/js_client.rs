@@ -19,20 +19,20 @@ pub enum Command {
     },
     SetAttribute {
         id:        String,
-        attribute: String,
+        attribute: Attribute,
         value:     String,
     },
     RemoveAttribute {
         id:        String,
-        attribute: String,
+        attribute: Attribute,
     },
     AddClass {
         id:    String,
-        value: String,
+        value: ClassName,
     },
     RemoveClass {
         id:    String,
-        value: String,
+        value: ClassName,
     },
     SetWidth {
         id: String,
@@ -57,7 +57,7 @@ pub enum Command {
     },
     SetCursor {
         id:    String,
-        value: String,
+        value: CursorValue,
     },
     ShowModal {
         id: String,
@@ -70,7 +70,7 @@ pub enum Command {
     },
     JsFn {
         id:   String,
-        name: String,
+        name: FnName,
     },
     /// 異常をJS側へ報告する。init.jsのexecuteがconsole.errorへ出力する。
     Error {
@@ -97,23 +97,23 @@ impl Serialize for Command {
             Self::SetAttribute { id, attribute, value } => {
                 map.serialize_entry("operation", &3u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("attribute", attribute)?;
+                map.serialize_entry("attribute", &attribute.encode_u16())?;
                 map.serialize_entry("value", value)?;
             }
             Self::RemoveAttribute { id, attribute } => {
                 map.serialize_entry("operation", &4u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("attribute", attribute)?;
+                map.serialize_entry("attribute", &attribute.encode_u16())?;
             }
             Self::AddClass { id, value } => {
                 map.serialize_entry("operation", &5u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("value", value)?;
+                map.serialize_entry("value", &value.encode_u16())?;
             }
             Self::RemoveClass { id, value } => {
                 map.serialize_entry("operation", &6u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("value", value)?;
+                map.serialize_entry("value", &value.encode_u16())?;
             }
             Self::SetWidth { id, px } => {
                 map.serialize_entry("operation", &7u8)?;
@@ -144,7 +144,7 @@ impl Serialize for Command {
             Self::SetCursor { id, value } => {
                 map.serialize_entry("operation", &12u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("value", value)?;
+                map.serialize_entry("value", &value.encode_u16())?;
             }
             Self::ShowModal { id } => {
                 map.serialize_entry("operation", &13u8)?;
@@ -161,7 +161,7 @@ impl Serialize for Command {
             Self::JsFn { id, name } => {
                 map.serialize_entry("operation", &16u8)?;
                 map.serialize_entry("id", id)?;
-                map.serialize_entry("name", name)?;
+                map.serialize_entry("name", &name.encode_u16())?;
             }
             Self::Error { message } => {
                 map.serialize_entry("operation", &18u8)?;
@@ -169,6 +169,75 @@ impl Serialize for Command {
             }
         }
         map.end()
+    }
+}
+
+// === static string index (init.js の各テーブルと index を揃える) ===
+//
+// app repositoryのjs_client.rsと同じ命名・同じindex。JSON上はu16の
+// インデックスとしてそのまま送る (Serialize impl参照)。バイナリ方式へ
+// 切り替える際も、init.js側のテーブル参照はそのまま使い回せる。
+
+/// `init.js::ATTRIBUTES` の index。HTML属性名。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Attribute {
+    Disabled,
+    Hidden,
+}
+
+impl Attribute {
+    fn encode_u16(self) -> u16 {
+        self as u16
+    }
+}
+
+/// `init.js::CLASS_NAMES` の index。CSSクラス名。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClassName {
+    Hide,
+    Show,
+    Hidden,
+}
+
+impl ClassName {
+    fn encode_u16(self) -> u16 {
+        self as u16
+    }
+}
+
+/// `init.js::CURSOR_VALUES` の index。CSS `cursor` の値。
+///
+/// `Default` / `Grab` はapp repositoryと共通のindex(0/1)。それ以降の
+/// resize系カーソルはrectgrid examples固有の追加(角/辺ドラッグ用)。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CursorValue {
+    Default,
+    Grab,
+    /// インラインstyleを外し、CSSの既定値に戻す (`el.style.cursor = ""`)。
+    /// `Default`(`"default"`を明示指定)とは異なる。
+    Unset,
+    NwseResize,
+    NeswResize,
+    EwResize,
+    NsResize,
+}
+
+impl CursorValue {
+    fn encode_u16(self) -> u16 {
+        self as u16
+    }
+}
+
+/// `init.js::FN_NAMES` の index。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FnName {
+    HideToast,
+    ShowToast,
+}
+
+impl FnName {
+    fn encode_u16(self) -> u16 {
+        self as u16
     }
 }
 
@@ -220,6 +289,7 @@ pub fn get_js_field(obj: &JsValue, key: &str) -> Option<JsValue> {
     Reflect::get(obj, &JsValue::from_str(key)).ok()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EventType {
     Submit,
     Click,
@@ -236,6 +306,10 @@ pub enum EventType {
     PointerUp,
     PointerMove,
     PointerCancel,
+    /// appはEVENT_SHUTDOWNを独立したフレーム種別として送るが、rectgrid
+    /// examplesはフレーム種別を持たずJSONの`event_type`一本で表すため、
+    /// ここに値を追加している(app repositoryのEventTypeには無い)。
+    Shutdown,
     Other,
 }
 
@@ -257,6 +331,7 @@ impl EventType {
             "pointerup" => Self::PointerUp,
             "pointermove" => Self::PointerMove,
             "pointercancel" => Self::PointerCancel,
+            "shutdown" => Self::Shutdown,
             _ => Self::Other,
         }
     }
@@ -1262,7 +1337,6 @@ pub mod dom {
     #[derive(Debug, Clone, PartialEq)]
     pub enum Tag {
         Body,
-        Head,
         Header,
         H1,
         H2,
@@ -1301,7 +1375,6 @@ pub mod dom {
         pub fn decode(s: &str) -> Self {
             match s {
                 "body" => Self::Body,
-                "head" => Self::Head,
                 "header" => Self::Header,
                 "h1" => Self::H1,
                 "h2" => Self::H2,
@@ -1340,7 +1413,6 @@ pub mod dom {
         pub fn encode(&self) -> &'static str {
             match self {
                 Self::Body => "body",
-                Self::Head => "head",
                 Self::Header => "header",
                 Self::H1 => "h1",
                 Self::H2 => "h2",
