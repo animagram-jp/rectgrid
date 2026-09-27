@@ -3,22 +3,22 @@ use serde::{Serialize, Serializer, ser::SerializeMap};
 use wasm_bindgen::JsValue;
 
 pub enum Command {
-    SetText { id: String, value: String },
-    SetValue { id: String, value: String },
-    SetAttribute { id: String, attribute: Attribute, value: String },
-    RemoveAttribute { id: String, attribute: Attribute },
-    AddClass { id: String, value: ClassName },
-    RemoveClass { id: String, value: ClassName },
-    SetWidth { id: String, px: u32 },
-    SetHeight { id: String, px: u32 },
-    SetZIndex { id: String, z: i32 },
-    SetBackground { id: String, value: String },
-    SetTranslate { id: String, x: f64, y: f64 },
-    SetCursor { id: String, value: CursorValue },
-    ShowModal { id: String },
-    CloseModal { id: String },
-    Focus { id: String },
-    JsFn { id: String, name: FnName },
+    SetText { id: dom::Id, value: String },
+    SetValue { id: dom::Id, value: String },
+    SetAttribute { id: dom::Id, attribute: Attribute, value: String },
+    RemoveAttribute { id: dom::Id, attribute: Attribute },
+    AddClass { id: dom::Id, value: ClassName },
+    RemoveClass { id: dom::Id, value: ClassName },
+    SetWidth { id: dom::Id, px: u32 },
+    SetHeight { id: dom::Id, px: u32 },
+    SetZIndex { id: dom::Id, z: i32 },
+    SetBackground { id: dom::Id, value: String },
+    SetTranslate { id: dom::Id, x: f64, y: f64 },
+    SetCursor { id: dom::Id, value: CursorValue },
+    ShowModal { id: dom::Id },
+    CloseModal { id: dom::Id },
+    Focus { id: dom::Id },
+    JsFn { id: dom::Id, name: FnName },
     Error { message: String },
 }
 
@@ -209,72 +209,73 @@ pub fn get_js_field(obj: &JsValue, key: &str) -> Option<JsValue> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EventType {
-    Submit,
+    Change,
     Click,
     ContextMenu,
-    KeyDown,
-    Input,
-    Change,
+    Drop,
     FocusIn,
     FocusOut,
+    Input,
+    KeyDown,
+    PointerCancel,
+    PointerDown,
+    PointerMove,
+    PointerUp,
     Resize,
     Scroll,
-    Drop,
-    PointerDown,
-    PointerUp,
-    PointerMove,
-    PointerCancel,
     Shutdown,
+    Submit,
     Other,
 }
 
 impl EventType {
-    pub fn decode(event_type: &str) -> Self {
-        match event_type {
-            "submit" => Self::Submit,
-            "click" => Self::Click,
-            "contextmenu" => Self::ContextMenu,
-            "keydown" => Self::KeyDown,
-            "input" => Self::Input,
-            "change" => Self::Change,
-            "focusin" => Self::FocusIn,
-            "focusout" => Self::FocusOut,
-            "resize" => Self::Resize,
-            "scroll" => Self::Scroll,
-            "drop" => Self::Drop,
-            "pointerdown" => Self::PointerDown,
-            "pointerup" => Self::PointerUp,
-            "pointermove" => Self::PointerMove,
-            "pointercancel" => Self::PointerCancel,
-            "shutdown" => Self::Shutdown,
+    pub fn decode_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Change,
+            2 => Self::Click,
+            3 => Self::ContextMenu,
+            4 => Self::Drop,
+            5 => Self::FocusIn,
+            6 => Self::FocusOut,
+            7 => Self::Input,
+            8 => Self::KeyDown,
+            9 => Self::PointerCancel,
+            10 => Self::PointerDown,
+            11 => Self::PointerMove,
+            12 => Self::PointerUp,
+            13 => Self::Resize,
+            14 => Self::Scroll,
+            15 => Self::Shutdown,
+            16 => Self::Submit,
             _ => Self::Other,
         }
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KeyName {
-    ArrowUp,
     ArrowDown,
     ArrowLeft,
     ArrowRight,
+    ArrowUp,
+    Backspace,
     Enter,
     Escape,
     Tab,
-    Backspace,
     Other,
 }
 
 impl KeyName {
-    pub fn decode(key_name: &str) -> Self {
-        match key_name {
-            "ArrowUp" => Self::ArrowUp,
-            "ArrowDown" => Self::ArrowDown,
-            "ArrowLeft" => Self::ArrowLeft,
-            "ArrowRight" => Self::ArrowRight,
-            "Enter" => Self::Enter,
-            "Escape" => Self::Escape,
-            "Tab" => Self::Tab,
-            "Backspace" => Self::Backspace,
+    pub fn decode_u8(value: u8) -> Self {
+        match value {
+            1 => Self::ArrowDown,
+            2 => Self::ArrowLeft,
+            3 => Self::ArrowRight,
+            4 => Self::ArrowUp,
+            5 => Self::Backspace,
+            6 => Self::Enter,
+            7 => Self::Escape,
+            8 => Self::Tab,
             _ => Self::Other,
         }
     }
@@ -532,6 +533,200 @@ fn detect_on_move(
     Some(Gesture::Drag { x: state.current_x, y: state.current_y })
 }
 
+#[cfg(test)]
+mod gesture_tests {
+    use alloc::vec::Vec;
+
+    use super::*;
+
+    fn run(events: &[(EventType, f64, f64, f64)], th: &Thresholds) -> Vec<Gesture> {
+        let mut state = PointerState::default();
+        let mut out = Vec::new();
+        for (event_type, x, y, time) in events {
+            let prev = state;
+            state = state.update(event_type, *x, *y, *time);
+            if let Some(g) = detect_gesture(&mut state, &prev, event_type, *time, th) {
+                out.push(g);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn swipe_right_fires() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 100.0, 100.0, 0.0),
+                (EventType::PointerMove, 200.0, 100.0, 50.0),
+                (EventType::PointerUp, 260.0, 100.0, 100.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::SwipeRight]);
+    }
+
+    #[test]
+    fn swipe_without_move_event() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 100.0, 100.0, 0.0),
+                (EventType::PointerUp, 260.0, 100.0, 100.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::SwipeRight]);
+    }
+
+    #[test]
+    fn swipe_fires_when_motion_continues_to_release() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 0.0, 0.0, 0.0),
+                (EventType::PointerMove, 100.0, 0.0, 50.0),
+                (EventType::PointerMove, 200.0, 0.0, 100.0),
+                (EventType::PointerUp, 260.0, 0.0, 120.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::SwipeRight]);
+    }
+
+    #[test]
+    fn swipe_does_not_fire_after_stopping_before_release() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 0.0, 0.0, 0.0),
+                (EventType::PointerMove, 150.0, 0.0, 20.0),
+                (EventType::PointerUp, 150.0, 0.0, 249.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, []);
+    }
+
+    #[test]
+    fn slow_move_is_drag() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 100.0, 100.0, 0.0),
+                (EventType::PointerMove, 150.0, 100.0, 400.0),
+                (EventType::PointerMove, 200.0, 100.0, 800.0),
+                (EventType::PointerUp, 200.0, 100.0, 900.0),
+            ],
+            &th,
+        );
+        assert_eq!(
+            got,
+            [
+                Gesture::Drag { x: 150.0, y: 100.0 },
+                Gesture::Drag { x: 200.0, y: 100.0 },
+                Gesture::DragEnd,
+            ]
+        );
+    }
+
+    #[test]
+    fn cancel_is_distinct_from_end() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 100.0, 100.0, 0.0),
+                (EventType::PointerMove, 150.0, 100.0, 400.0),
+                (EventType::PointerCancel, 150.0, 100.0, 500.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::Drag { x: 150.0, y: 100.0 }, Gesture::DragCancel]);
+    }
+
+    #[test]
+    fn quick_press_is_tap() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 100.0, 100.0, 0.0),
+                (EventType::PointerUp, 101.0, 100.0, 50.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::Tap]);
+    }
+
+    #[test]
+    fn long_press_fires_on_release() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[(EventType::PointerDown, 10.0, 10.0, 0.0), (EventType::PointerUp, 10.0, 10.0, 400.0)],
+            &th,
+        );
+        assert_eq!(got, [Gesture::LongPress]);
+    }
+
+    #[test]
+    fn long_press_fires_on_move_after_hold() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 10.0, 10.0, 0.0),
+                (EventType::PointerMove, 11.0, 10.0, 300.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::LongPress]);
+    }
+
+    #[test]
+    fn long_press_does_not_repeat() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 10.0, 10.0, 0.0),
+                (EventType::PointerMove, 11.0, 10.0, 300.0),
+                (EventType::PointerMove, 11.0, 10.0, 400.0),
+                (EventType::PointerUp, 11.0, 10.0, 500.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::LongPress]);
+    }
+
+    #[test]
+    fn long_press_suppressed_while_dragging() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 10.0, 10.0, 0.0),
+                (EventType::PointerMove, 40.0, 10.0, 100.0),
+                (EventType::PointerMove, 40.0, 10.0, 400.0),
+            ],
+            &th,
+        );
+        assert_eq!(got, [Gesture::Drag { x: 40.0, y: 10.0 }, Gesture::Drag { x: 40.0, y: 10.0 }]);
+    }
+
+    #[test]
+    fn touch_thresholds_are_looser() {
+        let mouse = Thresholds::for_device(Device::Mouse);
+        let touch = Thresholds::for_device(Device::Touch);
+        assert!(touch.long_press_ms > mouse.long_press_ms);
+        assert!(touch.long_press_slop_px > mouse.long_press_slop_px);
+        assert!(touch.drag_start_px > mouse.drag_start_px);
+    }
+
+    #[test]
+    fn same_input_differs_by_device() {
+        let events =
+            [(EventType::PointerDown, 10.0, 10.0, 0.0), (EventType::PointerUp, 10.0, 10.0, 300.0)];
+        assert_eq!(run(&events, &Thresholds::MOUSE), [Gesture::LongPress]);
+        assert_eq!(run(&events, &Thresholds::TOUCH), []);
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TouchPoint {
     id:        u32,
@@ -768,6 +963,19 @@ mod two_finger_tests {
         assert_eq!(state.primary_id(), Some(2));
         assert!(state.secondary_id().is_none());
         assert_eq!(state.fold(), FoldedInput::None);
+    }
+
+    #[test]
+    fn new_session_reclassifies_independently() {
+        let mut state =
+            TwoFingerState::default().touch_down(1, 100.0, 100.0).touch_down(2, 200.0, 100.0);
+        state = state.touch_move(1, 140.0, 100.0).touch_move(2, 160.0, 100.0);
+        assert!(matches!(state.fold(), FoldedInput::Pinch { .. }));
+
+        state = state.touch_up(2).0.touch_up(1).0;
+        state = state.touch_down(3, 0.0, 0.0).touch_down(4, 50.0, 0.0);
+        state = state.touch_move(3, 0.0, 50.0).touch_move(4, 50.0, 50.0);
+        assert_eq!(state.fold(), FoldedInput::AsSinglePoint { x: 25.0, y: 50.0 });
     }
 }
 
@@ -1010,133 +1218,209 @@ mod touch_tracker_tests {
         assert_eq!(got[4], Some(Gesture::Drag { x: 95.0, y: 0.0 }));
         assert_eq!(got[5], Some(Gesture::DragEnd));
     }
+
+    #[test]
+    fn primary_release_promotes_and_resyncs_single_finger_tracking() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 2, 200.0, 100.0, 0.0),
+                (EventType::PointerMove, 1, 140.0, 100.0, 50.0),
+                (EventType::PointerMove, 2, 160.0, 100.0, 60.0),
+                (EventType::PointerUp, 1, 140.0, 100.0, 70.0),
+                (EventType::PointerMove, 2, 161.0, 100.0, 120.0),
+                (EventType::PointerUp, 2, 161.0, 100.0, 170.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[3], Some(Gesture::Pinch { scale: 0.2, center_x: 150.0, center_y: 100.0 }));
+        assert_eq!(got[4], Some(Gesture::PinchEnd));
+        assert_eq!(got[5], None);
+        assert_eq!(got[6], Some(Gesture::Tap));
+    }
+
+    #[test]
+    fn third_finger_does_not_interfere() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 2, 200.0, 100.0, 0.0),
+                (EventType::PointerDown, 3, 300.0, 100.0, 0.0),
+                (EventType::PointerMove, 3, 310.0, 100.0, 10.0),
+                (EventType::PointerUp, 3, 310.0, 100.0, 20.0),
+                (EventType::PointerMove, 1, 140.0, 100.0, 50.0),
+                (EventType::PointerMove, 2, 160.0, 100.0, 60.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[0..5], [None, None, None, None, None]);
+        assert_eq!(got[6], Some(Gesture::Pinch { scale: 0.2, center_x: 150.0, center_y: 100.0 }));
+    }
+
+    #[test]
+    fn duplicate_pointer_down_does_not_reset_primary_state() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 1, 105.0, 100.0, 10.0),
+                (EventType::PointerMove, 1, 115.0, 100.0, 50.0),
+                (EventType::PointerUp, 1, 115.0, 100.0, 100.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[1], None);
+        assert_eq!(got[2], Some(Gesture::Drag { x: 115.0, y: 100.0 }));
+        assert_eq!(got[3], Some(Gesture::DragEnd));
+    }
+
+    #[test]
+    fn duplicate_pointer_down_does_not_block_genuine_second_finger() {
+        let th = Thresholds::MOUSE;
+        let got = run(
+            &[
+                (EventType::PointerDown, 1, 100.0, 100.0, 0.0),
+                (EventType::PointerDown, 1, 100.0, 100.0, 5.0),
+                (EventType::PointerDown, 2, 200.0, 100.0, 5.0),
+                (EventType::PointerMove, 1, 140.0, 100.0, 50.0),
+                (EventType::PointerMove, 2, 160.0, 100.0, 60.0),
+            ],
+            &th,
+        );
+        assert_eq!(got[4], Some(Gesture::Pinch { scale: 0.2, center_x: 150.0, center_y: 100.0 }));
+    }
 }
 
 pub mod dom {
-    use alloc::{format, string::String, vec::Vec};
+    use alloc::vec::Vec;
     use core::{
         clone::Clone,
         cmp::PartialEq,
         option::Option::{self, None, Some},
-        result::Result::Ok,
     };
 
-    #[derive(Debug, Clone, PartialEq)]
+    use js_sys::Array;
+    use serde::{Serialize, Serializer, ser::SerializeSeq};
+    use wasm_bindgen::JsValue;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Tag {
+        Article,
         Body,
-        Header,
+        Button,
+        Dd,
+        Dl,
+        Drawer,
+        Dt,
+        Fieldset,
+        Footer,
+        Form,
         H1,
         H2,
         H3,
-        Ul,
-        Li,
-        Button,
-        Main,
-        Section,
-        Span,
-        Dl,
-        Dt,
-        Dd,
-        Ol,
-        P,
-        Textarea,
-        Drawer,
-        Modal,
-        Form,
+        Header,
         Input,
-        Fieldset,
-        Table,
-        Thead,
-        Tbody,
-        Tr,
-        Th,
-        Td,
-        Select,
-        Footer,
+        Li,
+        Main,
+        Modal,
+        Ol,
         Output,
-        Article,
+        P,
+        Section,
+        Select,
+        Span,
+        Table,
+        Tbody,
+        Td,
+        Textarea,
+        Th,
+        Thead,
+        Tr,
+        Ul,
         Other,
     }
 
     impl Tag {
-        pub fn decode(s: &str) -> Self {
-            match s {
-                "body" => Self::Body,
-                "header" => Self::Header,
-                "h1" => Self::H1,
-                "h2" => Self::H2,
-                "h3" => Self::H3,
-                "ul" => Self::Ul,
-                "li" => Self::Li,
-                "button" => Self::Button,
-                "main" => Self::Main,
-                "section" => Self::Section,
-                "span" => Self::Span,
-                "dl" => Self::Dl,
-                "dt" => Self::Dt,
-                "dd" => Self::Dd,
-                "ol" => Self::Ol,
-                "p" => Self::P,
-                "textarea" => Self::Textarea,
-                "drawer" => Self::Drawer,
-                "modal" => Self::Modal,
-                "form" => Self::Form,
-                "input" => Self::Input,
-                "fieldset" => Self::Fieldset,
-                "table" => Self::Table,
-                "thead" => Self::Thead,
-                "tbody" => Self::Tbody,
-                "tr" => Self::Tr,
-                "th" => Self::Th,
-                "td" => Self::Td,
-                "select" => Self::Select,
-                "footer" => Self::Footer,
-                "output" => Self::Output,
-                "article" => Self::Article,
-                _ => Self::Other,
+        pub fn encode_u8(&self) -> u8 {
+            match self {
+                Self::Article => 1,
+                Self::Body => 2,
+                Self::Button => 3,
+                Self::Dd => 4,
+                Self::Dl => 5,
+                Self::Drawer => 6,
+                Self::Dt => 7,
+                Self::Fieldset => 8,
+                Self::Footer => 9,
+                Self::Form => 10,
+                Self::H1 => 11,
+                Self::H2 => 12,
+                Self::H3 => 13,
+                Self::Header => 14,
+                Self::Input => 15,
+                Self::Li => 16,
+                Self::Main => 17,
+                Self::Modal => 18,
+                Self::Ol => 19,
+                Self::Output => 20,
+                Self::P => 21,
+                Self::Section => 22,
+                Self::Select => 23,
+                Self::Span => 24,
+                Self::Table => 25,
+                Self::Tbody => 26,
+                Self::Td => 27,
+                Self::Textarea => 28,
+                Self::Th => 29,
+                Self::Thead => 30,
+                Self::Tr => 31,
+                Self::Ul => 32,
+                Self::Other => 0,
             }
         }
 
-        pub fn encode(&self) -> &'static str {
-            match self {
-                Self::Body => "body",
-                Self::Header => "header",
-                Self::H1 => "h1",
-                Self::H2 => "h2",
-                Self::H3 => "h3",
-                Self::Ul => "ul",
-                Self::Li => "li",
-                Self::Button => "button",
-                Self::Main => "main",
-                Self::Section => "section",
-                Self::Span => "span",
-                Self::Dl => "dl",
-                Self::Dt => "dt",
-                Self::Dd => "dd",
-                Self::Ol => "ol",
-                Self::P => "p",
-                Self::Textarea => "textarea",
-                Self::Drawer => "drawer",
-                Self::Modal => "modal",
-                Self::Form => "form",
-                Self::Input => "input",
-                Self::Fieldset => "fieldset",
-                Self::Table => "table",
-                Self::Thead => "thead",
-                Self::Tbody => "tbody",
-                Self::Tr => "tr",
-                Self::Th => "th",
-                Self::Td => "td",
-                Self::Select => "select",
-                Self::Footer => "footer",
-                Self::Output => "output",
-                Self::Article => "article",
-                Self::Other => "",
+        pub fn decode_u8(value: u8) -> Self {
+            match value {
+                1 => Self::Article,
+                2 => Self::Body,
+                3 => Self::Button,
+                4 => Self::Dd,
+                5 => Self::Dl,
+                6 => Self::Drawer,
+                7 => Self::Dt,
+                8 => Self::Fieldset,
+                9 => Self::Footer,
+                10 => Self::Form,
+                11 => Self::H1,
+                12 => Self::H2,
+                13 => Self::H3,
+                14 => Self::Header,
+                15 => Self::Input,
+                16 => Self::Li,
+                17 => Self::Main,
+                18 => Self::Modal,
+                19 => Self::Ol,
+                20 => Self::Output,
+                21 => Self::P,
+                22 => Self::Section,
+                23 => Self::Select,
+                24 => Self::Span,
+                25 => Self::Table,
+                26 => Self::Tbody,
+                27 => Self::Td,
+                28 => Self::Textarea,
+                29 => Self::Th,
+                30 => Self::Thead,
+                31 => Self::Tr,
+                32 => Self::Ul,
+                _ => Self::Other,
             }
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Segment {
         pub tag: Tag,
         pub n:   Option<u32>,
@@ -1149,39 +1433,46 @@ pub mod dom {
         pub fn numbered(tag: Tag, n: u32) -> Self {
             Self { tag, n: Some(n) }
         }
+    }
 
-        pub fn decode(s: &str) -> Self {
-            if let Some(pos) = s.rfind('-') {
-                let (tag, num) = s.split_at(pos);
-                if let Ok(n) = num[1..].parse::<u32>() {
-                    return Self::numbered(Tag::decode(tag), n);
-                }
-            }
-            Self::new(Tag::decode(s))
-        }
-
-        pub fn encode(&self) -> String {
-            match self.n {
-                Some(n) => format!("{}-{}", self.tag.encode(), n),
-                None => self.tag.encode().to_string(),
-            }
+    impl Serialize for Segment {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut seq = serializer.serialize_seq(Some(2))?;
+            seq.serialize_element(&self.tag.encode_u8())?;
+            seq.serialize_element(&self.n)?;
+            seq.end()
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Id(pub Vec<Segment>);
+
+    impl Serialize for Id {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.serialize(serializer)
+        }
+    }
 
     impl Id {
         pub fn new(segs: &[(Tag, Option<u32>)]) -> Self {
-            Self(segs.iter().map(|(tag, n)| Segment { tag: tag.clone(), n: *n }).collect())
+            Self(segs.iter().map(|(tag, n)| Segment { tag: *tag, n: *n }).collect())
         }
 
-        pub fn decode(id: &str) -> Self {
-            Self(id.split('_').map(Segment::decode).collect())
-        }
-
-        pub fn encode(&self) -> String {
-            self.0.iter().map(Segment::encode).collect::<Vec<_>>().join("_")
+        pub fn decode_js(value: &JsValue) -> Self {
+            if !Array::is_array(value) {
+                return Self(Vec::new());
+            }
+            let array = Array::from(value);
+            let segments = array
+                .iter()
+                .map(|entry| {
+                    let pair = Array::from(&entry);
+                    let tag = Tag::decode_u8(pair.get(0).as_f64().unwrap_or(0.0) as u8);
+                    let n = pair.get(1).as_f64().map(|f| f as u32);
+                    Segment { tag, n }
+                })
+                .collect();
+            Self(segments)
         }
 
         pub fn last_tag(&self) -> Option<&Tag> {
@@ -1205,16 +1496,11 @@ pub struct CanvasEvent {
 
 impl CanvasEvent {
     pub fn decode(payload: &wasm_bindgen::JsValue) -> Self {
-        let event_type = get_js_str(payload, "event_type")
-            .as_deref()
-            .map(EventType::decode)
-            .unwrap_or(EventType::Other);
-        let id = get_js_str(payload, "target_id")
-            .as_deref()
-            .map(dom::Id::decode)
+        let event_type = EventType::decode_u8(get_js_u32(payload, "event_type") as u8);
+        let id = get_js_field(payload, "target_id")
+            .map(|v| dom::Id::decode_js(&v))
             .unwrap_or_else(|| dom::Id(vec![]));
-        let key =
-            get_js_str(payload, "key").as_deref().map(KeyName::decode).unwrap_or(KeyName::Other);
+        let key = KeyName::decode_u8(get_js_u32(payload, "key") as u8);
         let value = get_js_str(payload, "value").unwrap_or_default();
         let x = get_js_f64(payload, "x").unwrap_or(0.0);
         let y = get_js_f64(payload, "y").unwrap_or(0.0);

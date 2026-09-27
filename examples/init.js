@@ -53,7 +53,7 @@ function execute(cmd) {
         return;
     }
 
-    const el = document.getElementById(cmd.id);
+    const el = document.getElementById(encode_id(cmd.id));
     if (!el) return;
     switch (cmd.operation) {
         case 1:  el.textContent = cmd.value ?? ""; break;
@@ -83,6 +83,90 @@ const CURSOR_VALUES = ["default", "grab", "", "nwse-resize", "nesw-resize", "ew-
 
 const FN_NAMES = ["hide_toast", "show_toast"];
 
+const EVENT_TYPES = [
+    null,
+    "change",
+    "click",
+    "contextmenu",
+    "drop",
+    "focusin",
+    "focusout",
+    "input",
+    "keydown",
+    "pointercancel",
+    "pointerdown",
+    "pointermove",
+    "pointerup",
+    "resize",
+    "scroll",
+    "shutdown",
+    "submit",
+];
+
+const KEY_NAMES = [
+    null,
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "Backspace",
+    "Enter",
+    "Escape",
+    "Tab",
+];
+
+const TAGS = [
+    "",
+    "article",
+    "body",
+    "button",
+    "dd",
+    "dl",
+    "drawer",
+    "dt",
+    "fieldset",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "header",
+    "input",
+    "li",
+    "main",
+    "modal",
+    "ol",
+    "output",
+    "p",
+    "section",
+    "select",
+    "span",
+    "table",
+    "tbody",
+    "td",
+    "textarea",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+];
+
+function decode_id(id) {
+    if (!id) return [];
+    return id.split("_").map((segment) => {
+        const dash = segment.lastIndexOf("-");
+        const number = dash < 0 ? NaN : Number(segment.slice(dash + 1));
+        const tag = Number.isInteger(number) ? segment.slice(0, dash) : segment;
+        return [Math.max(0, TAGS.indexOf(tag)), Number.isInteger(number) ? number : null];
+    });
+}
+
+function encode_id(segments) {
+    return segments
+        .map(([tag, n]) => (n == null ? TAGS[tag] : `${TAGS[tag]}-${n}`))
+        .join("_");
+}
+
 const js_fn = {
     show_toast: (el) => {
         el.classList.remove("hidden");
@@ -106,9 +190,9 @@ const ROOTS = ["header", "main", "modal", "form", "output", "section"]
 function send(e) {
     if (!ROOTS.some(r => r && r.contains(e.target))) return;
     worker.postMessage({ type: "event", payload: {
-        event_type: e.type,
-        target_id:  e.target.id ?? "",
-        key:        e.key ?? "",
+        event_type: Math.max(0, EVENT_TYPES.indexOf(e.type)),
+        target_id:  decode_id(e.target.id ?? ""),
+        key:        Math.max(0, KEY_NAMES.indexOf(e.key)),
         value:      e.target.value ?? "",
         x:          e.clientX ?? 0,
         y:          e.clientY ?? 0,
@@ -130,9 +214,9 @@ function bind() {
         resize_timer = setTimeout(() => {
             const rect = document.getElementById("section")?.getBoundingClientRect();
             worker.postMessage({ type: "event", payload: {
-                event_type:       "resize",
-                target_id:        "",
-                key:              "",
+                event_type:       EVENT_TYPES.indexOf("resize"),
+                target_id:        [],
+                key:              0,
                 value:            "",
                 x:                window.innerWidth,
                 y:                window.innerHeight,
@@ -145,8 +229,8 @@ function bind() {
 
     window.addEventListener("scroll", (e) => {
         worker.postMessage({ type: "event", payload: {
-            event_type: "scroll",
-            target_id:  e.target?.id ?? "",
+            event_type: EVENT_TYPES.indexOf("scroll"),
+            target_id:  decode_id(e.target?.id ?? ""),
             x:          window.scrollX,
             y:          window.scrollY,
         }});
@@ -154,6 +238,6 @@ function bind() {
 
     window.addEventListener("pagehide", (e) => {
         if (e.persisted) return;
-        worker.postMessage({ type: "event", payload: { event_type: "shutdown" } });
+        worker.postMessage({ type: "event", payload: { event_type: EVENT_TYPES.indexOf("shutdown") } });
     });
 }

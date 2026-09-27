@@ -1,3 +1,5 @@
+const EVENT_SHUTDOWN = 15;
+
 let app;
 
 self.addEventListener("message", async (e) => {
@@ -27,7 +29,7 @@ self.addEventListener("message", async (e) => {
     const commands = app.process(payload);
     if (commands?.length) self.postMessage({ type: "execute", payload: Array.from(commands) });
 
-    if (payload.event_type === "shutdown") self.close();
+    if (payload.event_type === EVENT_SHUTDOWN) self.close();
 });
 
 self.addEventListener("error", (e) => {

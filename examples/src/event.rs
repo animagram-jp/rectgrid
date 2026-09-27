@@ -67,7 +67,7 @@ impl Handler {
 
     pub fn initial_draw(&mut self) -> (Vec<Event>, Vec<Command>) {
         let mut cmds: Vec<Command> = vec![Command::RemoveAttribute {
-            id:        Id::new(&[(Tag::Body, None)]).encode(),
+            id:        Id::new(&[(Tag::Body, None)]),
             attribute: Attribute::Hidden,
         }];
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
@@ -78,16 +78,16 @@ impl Handler {
                 cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
                 if bx.has_size() {
                     cmds.push(Command::SetWidth {
-                        id: article.encode(),
+                        id: article.clone(),
                         px: offset_px[0].get() as u32,
                     });
                     cmds.push(Command::SetHeight {
-                        id: article.encode(),
+                        id: article.clone(),
                         px: offset_px[1].get() as u32,
                     });
                 }
             }
-            cmds.push(Command::SetZIndex { id: article.encode(), z: z as i32 });
+            cmds.push(Command::SetZIndex { id: article.clone(), z: z as i32 });
         }
         cmds.push(grid_background_cmd(self.section_width_px));
         (vec![], cmds)
@@ -139,10 +139,10 @@ impl Handler {
                     }
                     let top_z = self.articles.len();
                     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
-                    cmds.push(Command::SetZIndex { id: article.encode(), z: top_z as i32 });
+                    cmds.push(Command::SetZIndex { id: article.clone(), z: top_z as i32 });
                     if let Some(cursor) = corner_cursor(self.drag_corner) {
                         let section = Id::new(&[(Tag::Section, None)]);
-                        cmds.push(Command::SetCursor { id: section.encode(), value: cursor });
+                        cmds.push(Command::SetCursor { id: section.clone(), value: cursor });
                     }
                 }
                 self.drag_target = target;
@@ -193,11 +193,11 @@ impl Handler {
                         let mut cmds =
                             vec![translate_card(idx, base_px[0].get(), base_px[1].get())];
                         cmds.push(Command::SetWidth {
-                            id: article.encode(),
+                            id: article.clone(),
                             px: size_px[0].get() as u32,
                         });
                         cmds.push(Command::SetHeight {
-                            id: article.encode(),
+                            id: article.clone(),
                             px: size_px[1].get() as u32,
                         });
                         return (vec![], cmds);
@@ -216,7 +216,7 @@ impl Handler {
                     if self.drag_corner.is_some() {
                         let section = Id::new(&[(Tag::Section, None)]);
                         cmds.push(Command::SetCursor {
-                            id:    section.encode(),
+                            id:    section.clone(),
                             value: CursorValue::Unset,
                         });
                     }
@@ -272,7 +272,7 @@ impl Handler {
                             let article =
                                 Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
                             cmds.push(Command::SetZIndex {
-                                id: article.encode(),
+                                id: article.clone(),
                                 z:  (old_pos + new_z) as i32,
                             });
                         }
@@ -288,7 +288,7 @@ impl Handler {
                     if self.drag_corner.is_some() {
                         let section = Id::new(&[(Tag::Section, None)]);
                         cmds.push(Command::SetCursor {
-                            id:    section.encode(),
+                            id:    section.clone(),
                             value: CursorValue::Unset,
                         });
                     }
@@ -307,11 +307,11 @@ impl Handler {
                             let article =
                                 Id::new(&[(Tag::Section, None), (Tag::Article, Some(idx))]);
                             cmds.push(Command::SetWidth {
-                                id: article.encode(),
+                                id: article.clone(),
                                 px: size_px[0].get() as u32,
                             });
                             cmds.push(Command::SetHeight {
-                                id: article.encode(),
+                                id: article.clone(),
                                 px: size_px[1].get() as u32,
                             });
                         }
@@ -344,12 +344,9 @@ impl Handler {
             cmds.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
             if bx.has_size() {
                 let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(*n))]);
-                cmds.push(Command::SetWidth {
-                    id: article.encode(),
-                    px: offset_px[0].get() as u32,
-                });
+                cmds.push(Command::SetWidth { id: article.clone(), px: offset_px[0].get() as u32 });
                 cmds.push(Command::SetHeight {
-                    id: article.encode(),
+                    id: article.clone(),
                     px: offset_px[1].get() as u32,
                 });
             }
@@ -370,12 +367,12 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
          repeating-linear-gradient(to bottom, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {y_unit_rem}rem)"
     );
     let section = Id::new(&[(Tag::Section, None)]);
-    Command::SetBackground { id: section.encode(), value: bg }
+    Command::SetBackground { id: section.clone(), value: bg }
 }
 
 fn translate_card(n: u32, x: f64, y: f64) -> Command {
     let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(n))]);
-    Command::SetTranslate { id: article.encode(), x, y }
+    Command::SetTranslate { id: article.clone(), x, y }
 }
 
 fn corner_cursor(corner: Option<[Option<bool>; 2]>) -> Option<CursorValue> {
