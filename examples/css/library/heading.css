@@ -1,0 +1,37 @@
+/*
+    Usage:
+
+    <h1></h1>
+
+    <hgroup>
+        <h1>block</h1>
+        <p>block</p></hgroup> 
+
+    <hgroup data-axis="inline">
+        <h1>block</h1>
+        <p>block</p></hgroup> 
+*/
+
+@layer css.heading {
+
+    :where(h1, h2, h3, h4, h5, h6) {
+        font-weight: bold;
+    }
+
+    hgroup > p {
+        font-weight: bold;
+    }
+
+    /* --- data-axis="inline" --- */
+
+    hgroup[data-axis="inline"] > :where(h1, h2, h3, h4, h5, h6) {
+        display:        inline flow;
+        vertical-align: baseline;
+    }
+
+    hgroup[data-axis="inline"] > p {
+        display:        inline flow-root;
+        vertical-align: baseline;
+        white-space:    pre-wrap;
+    }
+}

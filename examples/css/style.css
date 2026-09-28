@@ -1,3 +1,8 @@
+:root {
+    --elevation-2:
+        0 2px 12px 2px rgb(var(--rgb-black) / 0.1), 0 1px 6px 0 rgb(var(--rgb-black) / 0.3);
+}
+
 html {
     overflow-x: hidden;
 }
@@ -40,7 +45,7 @@ body {
     cursor: grab;
     user-select: none;
     padding: 1rem;
-    border: 1px solid rgb(var(--rgb-ink));
+    border: 1px solid var(--color-ink);
     border-radius: 0.5rem;
     box-shadow: var(--elevation-2);
 }
@@ -55,4 +60,12 @@ body {
     height: 0;
     min-width: 0;
     overflow: hidden;
+}
+
+[data-chip-label] {
+    display: inline flex;
+    vertical-align: middle;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.5rem;
+    overflow-wrap: anywhere;
 }

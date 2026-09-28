@@ -365,8 +365,8 @@ fn grid_background_cmd(section_width_px: f64) -> Command {
     let x_unit = section_width_px / X_COLS as f64;
     let y_unit_rem = Y_UNIT_REM;
     let bg = format!(
-        "repeating-linear-gradient(to right, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {x_unit:.2}px), \
-         repeating-linear-gradient(to bottom, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 0px, rgb(var(--rgb-ink) / var(--alpha-highlight-weak)) 1px, transparent 1px, transparent {y_unit_rem}rem)"
+        "repeating-linear-gradient(to right, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent {x_unit:.2}px), \
+         repeating-linear-gradient(to bottom, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent {y_unit_rem}rem)"
     );
     let section = Id::new(&[(Tag::Section, None)]);
     Command::SetBackground { id: section.clone(), value: bg }
