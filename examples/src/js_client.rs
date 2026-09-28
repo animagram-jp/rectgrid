@@ -131,6 +131,7 @@ pub enum ClassName {
     Hide,
     Show,
     Hidden,
+    Highlighted,
 }
 
 impl ClassName {

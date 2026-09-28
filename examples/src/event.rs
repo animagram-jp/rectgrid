@@ -3,11 +3,12 @@ use core::array::from_fn;
 
 use rectgrid::{
     BBox, IncrementFunction, Px, RectGrid, Unit, corner_test, drag_resize, drag_translate,
+    geometry::{Circle, as_on_circle},
     snap_point_to_unit, snap_region_to_unit,
 };
 
 use crate::js_client::{
-    CanvasEvent, Command, CursorValue, EventType, Gesture, PointerState,
+    CanvasEvent, ClassName, Command, CursorValue, EventType, Gesture, PointerState,
     dom::{Id, Tag},
 };
 
@@ -34,7 +35,11 @@ pub struct Handler {
     drag_px:          (f64, f64),
     rectgrid:         RectGrid<2>,
     section_width_px: f64,
+    drop_zone:        Circle<2>,
+    drop_zone_active: bool,
 }
+
+const DROP_ZONE_ARTICLE: u32 = 4;
 
 impl Handler {
     pub fn new(viewport_width_px: f64, section_origin_px: [f64; 2]) -> Self {
@@ -46,7 +51,6 @@ impl Handler {
                 (1, BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
                 (2, BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(0.0), Unit::new(0.0)])),
                 (3, BBox::new([Unit::new(2.0), Unit::new(0.0)], [Unit::new(2.0), Unit::new(3.0)])),
-                (4, BBox::new([Unit::new(2.0), Unit::new(3.0)], [Unit::new(2.0), Unit::new(3.0)])),
             ],
             drag_target: None,
             drag_corner: None,
@@ -59,6 +63,10 @@ impl Handler {
             )
             .unwrap(),
             section_width_px,
+            // Fixed drop zone occupying the former article-4 slot: a circle inscribed
+            // in a 2x3 unit square centered at [3.0, 4.5].
+            drop_zone: Circle { center: [Unit::new(3.0), Unit::new(4.5)], radius: Unit::new(1.0) },
+            drop_zone_active: false,
         }
     }
     pub fn close(&self) -> Vec<Command> {
@@ -87,7 +95,73 @@ impl Handler {
             cmds.push(Command::SetZIndex { id: article.clone(), z: z as i32 });
         }
         cmds.push(grid_background_cmd(self.section_width_px));
+        cmds.extend(self.drop_zone_cmds());
         (vec![], cmds)
+    }
+
+    /// Checks whether a dragged card with area overlaps the circular drop zone, toggling the
+    /// highlight only on a state change (entering/leaving). base_local_px is the card's current
+    /// dragged-to base (local px, origin already subtracted); offset is its Unit-space size
+    /// (unchanged during a move drag). Overlap is decided in Unit space via geometry::as_on_circle,
+    /// by clamping the circle's center into the card's rect and testing the clamped (nearest) point
+    /// — this catches edge/interior overlap, not just corners-inside-circle.
+    /// point_to_unit expects a global (origin-relative) px, so origin is added back before the lookup.
+    fn check_drop_zone(&mut self, base_local_px: [Px; 2], offset: [Unit; 2]) -> Vec<Command> {
+        let base_global_px: [Px; 2] = from_fn(|d| base_local_px[d] + self.rectgrid.origin[d]);
+        let base_unit: [Unit; 2] = from_fn(|d| {
+            self.rectgrid.point_to_unit(base_global_px)[d].unwrap_or(Unit::new(f64::INFINITY))
+        });
+        let far_unit: [Unit; 2] = from_fn(|d| base_unit[d] + offset[d]);
+        let nearest: [Unit; 2] = from_fn(|d| {
+            Unit::new(self.drop_zone.center[d].get().clamp(base_unit[d].get(), far_unit[d].get()))
+        });
+        let zone = Circle { center: self.drop_zone.center, radius: self.drop_zone.radius };
+        let result = as_on_circle(nearest, zone);
+        let inside = result.signed_distance.get() <= 0.0;
+        if inside == self.drop_zone_active {
+            return vec![];
+        }
+        self.drop_zone_active = inside;
+        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(DROP_ZONE_ARTICLE))]);
+        vec![if inside {
+            Command::AddClass { id: article, value: ClassName::Highlighted }
+        } else {
+            Command::RemoveClass { id: article, value: ClassName::Highlighted }
+        }]
+    }
+
+    /// Clears the drop zone highlight left over from a drag that just ended/was cancelled.
+    fn clear_drop_zone(&mut self) -> Vec<Command> {
+        if !self.drop_zone_active {
+            return vec![];
+        }
+        self.drop_zone_active = false;
+        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(DROP_ZONE_ARTICLE))]);
+        vec![Command::RemoveClass { id: article, value: ClassName::Highlighted }]
+    }
+
+    /// Positions/sizes the fixed circular drop zone (article-4) from drop_zone's Unit geometry.
+    /// The grid's x/y axes have independent unit->px scales, so a circle defined in Unit space
+    /// does not generally map to a square in px space; the diameter is pinned to the shorter of
+    /// the two axis-wise px spans (border-radius: 50% in CSS then renders it as a true circle).
+    fn drop_zone_cmds(&self) -> Vec<Command> {
+        let article = Id::new(&[(Tag::Section, None), (Tag::Article, Some(DROP_ZONE_ARTICLE))]);
+        let r = self.drop_zone.radius;
+        let center_px: [Px; 2] = from_fn(|d| {
+            self.rectgrid.unit_to_px(d, &self.drop_zone.center[d]).unwrap_or(Px::new(0.0))
+        });
+        let span_px: [Px; 2] = from_fn(|d| {
+            let near = self.rectgrid.unit_to_px(d, &(self.drop_zone.center[d] - r)).unwrap_or(Px::new(0.0));
+            let far = self.rectgrid.unit_to_px(d, &(self.drop_zone.center[d] + r)).unwrap_or(Px::new(0.0));
+            far - near
+        });
+        let diameter = span_px[0].get().min(span_px[1].get());
+        let base_px: [Px; 2] = from_fn(|d| center_px[d] - Px::new(diameter / 2.0));
+        vec![
+            translate_card(DROP_ZONE_ARTICLE, base_px[0].get(), base_px[1].get()),
+            Command::SetWidth { id: article.clone(), px: diameter as u32 },
+            Command::SetHeight { id: article.clone(), px: diameter as u32 },
+        ]
     }
 
     pub fn process(
@@ -126,7 +200,7 @@ impl Handler {
                     self.drag_corner = corner;
                     hit_n
                 } else {
-                    article_index_at(&event.id).or(hit_n)
+                    article_index_at(&event.id).filter(|n| *n != DROP_ZONE_ARTICLE).or(hit_n)
                 };
                 let mut cmds = vec![];
                 if let Some(idx) = target {
@@ -202,11 +276,16 @@ impl Handler {
                             id: article.clone(),
                             px: size_px[1].get() as u32,
                         });
+                        cmds.extend(self.check_drop_zone(base_px, new_bx.offset()));
                         return (vec![], cmds);
                     }
+                    let offset = bx.offset();
                     let px = drag_translate(&self.rectgrid, pointer, drag_offset);
-                    (vec![], vec![translate_card(idx, px[0].get(), px[1].get())])
+                    let mut cmds = vec![translate_card(idx, px[0].get(), px[1].get())];
+                    cmds.extend(self.check_drop_zone(px, offset));
+                    (vec![], cmds)
                 } else {
+                    // Point cards (no area) never trigger the drop zone.
                     let px = drag_translate(&self.rectgrid, pointer, drag_offset);
                     self.drag_px = (px[0].get(), px[1].get());
                     (vec![], vec![translate_card(idx, px[0].get(), px[1].get())])
@@ -280,6 +359,7 @@ impl Handler {
                         }
                     }
                 }
+                cmds.extend(self.clear_drop_zone());
                 self.drag_target = None;
                 self.drag_corner = None;
                 (vec![], cmds)
@@ -319,6 +399,7 @@ impl Handler {
                         }
                     }
                 }
+                cmds.extend(self.clear_drop_zone());
                 self.drag_target = None;
                 self.drag_corner = None;
                 (vec![], cmds)
@@ -353,6 +434,7 @@ impl Handler {
                 });
             }
         }
+        cmds.extend(self.drop_zone_cmds());
         (vec![], cmds)
     }
 

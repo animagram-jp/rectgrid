@@ -77,7 +77,7 @@ function execute(cmd) {
 
 const ATTRIBUTES = ["disabled", "hidden"];
 
-const CLASS_NAMES = ["hide", "show", "hidden"];
+const CLASS_NAMES = ["hide", "show", "hidden", "highlighted"];
 
 const CURSOR_VALUES = ["default", "grab", "", "nwse-resize", "nesw-resize", "ew-resize", "ns-resize"];
 
