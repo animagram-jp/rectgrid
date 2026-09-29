@@ -17,7 +17,7 @@ use crate::{Error, field::Field};
 
 // === send operation ===
 //
-// see distribution/init.js execute operation
+// see init.js execute operation
 
 pub const OPERATION_SET_TEXT: u8 = 1;
 pub const OPERATION_SET_VALUE: u8 = 2;
@@ -1967,7 +1967,7 @@ mod wire_tests {
         event::EventError,
     };
 
-    const INIT_JS: &str = include_str!("../distribution/init.js");
+    const INIT_JS: &str = include_str!("../init.js");
 
     const SYMBOLS: [(&str, &str); 32] = [
         ("Ampersand", "&"),

@@ -47,12 +47,12 @@ jobs:
             - name: "wasm-bindgen"
               working-directory: "./examples"
               run: |
-                  wasm-bindgen --target web --out-dir distribution/app --out-name app \
+                  wasm-bindgen --target web --out-dir app --out-name app \
                     target/wasm32-unknown-unknown/release/app.wasm
 
             - name: "remove wasm-bindgen package boilerplate (no suppression flag exists)"
               working-directory: "./examples"
-              run: rm -f distribution/app/README.md distribution/app/LICENSE
+              run: rm -f app/README.md app/LICENSE
 
             - name: "setup Github Pages"
               uses: actions/configure-pages@v6
@@ -60,7 +60,7 @@ jobs:
             - name: "upload artifact as Github Pages"
               uses: actions/upload-pages-artifact@v5
               with:
-                path: "./examples/distribution"
+                path: "./examples"
 
             - name: "deploy to GitHub Pages"
               id: "deployment"

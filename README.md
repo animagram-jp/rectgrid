@@ -35,7 +35,7 @@ cd examples && cargo test
 cd examples
 RUSTFLAGS="-Clink-arg=--import-memory -Clink-arg=--max-memory=134217728" \
 cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --target web --out-dir distribution/app --out-name app target/wasm32-unknown-unknown/release/app.wasm
+wasm-bindgen --target web --out-dir app --out-name app target/wasm32-unknown-unknown/release/app.wasm
 
 # auto formatter
 cargo +nightly fmt

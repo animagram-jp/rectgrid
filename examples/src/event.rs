@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use crate::js_client::{put_f32, put_str, put_u32};
 
-    const INIT_JS: &str = include_str!("../distribution/init.js");
+    const INIT_JS: &str = include_str!("../init.js");
 
     const KEY_DOWN: u8 = 8;
     const ENTER: u8 = 37;
