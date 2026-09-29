@@ -37,11 +37,6 @@ const EVENT_SCROLL = 3;
 const EVENT_VISIBILITY = 4;
 const EVENT_SHUTDOWN = 8;
 
-const THREAD = crossOriginIsolated ? "worker" : "main";
-
-// flag of retry of loading when fallback to THREAD === "main"
-const MAIN_RELOAD_KEY = "app:main-thread-reload-attempted";
-
 /**
  *  MUST Sync with talc allocator -Clink-arg=--max-memory=134217728, 128MiB = 2048 pages
  */
@@ -56,7 +51,6 @@ const S = {
     memory: new WebAssembly.Memory({
         initial: Math.ceil(ARENA_SIZE / 65536) + 256,
         maximum: MEMORY_MAXIMUM_PAGES,
-        shared: THREAD === "worker",
     }),
     exports: null,
     base: 0,
@@ -69,7 +63,6 @@ const S = {
     call_app: () => {},
 };
 
-let worker = null;
 let bound = false;
 let restarting = false;
 let composing_element = null;
@@ -87,103 +80,41 @@ function start() {
         document.body.appendChild(s);
     }
 
-    if (THREAD === "main") {
-        try_recover_to_worker_thread().then(async (reloading) => {
-            if (reloading) return;
+    load();
+}
 
-            // `App.init` awaits `FileStore::new`, which requires a
-            // dedicated worker (`FileSystemSyncAccessHandle` is only
-            // obtainable in a worker). So this path only works for a
-            // configuration without persistence. THREAD === "main" is
-            // for when you only want to verify the arena layout and the
-            // command / event round trip.
-            const { default: init, App, arena_pointer, initialize, process_event } =
-                await import("./app/app.js");
-            await init({ memory: S.memory });
+async function load() {
+    const { default: init, App, arena_pointer, initialize, process_event } =
+        await import("./app/app.js");
+    await init({ memory: S.memory });
 
-            S.exports = { arena_pointer, initialize, process_event };
-            S.buffer = null;
-            initialize();
-            S.base = arena_pointer();
+    S.exports = { arena_pointer, initialize, process_event };
+    S.buffer = null;
+    initialize();
+    S.base = arena_pointer();
 
-            S.call_app = () => { process_event(); drain(); };
+    S.call_app = () => { process_event(); drain(); };
 
-            await App.init(
-                window.matchMedia("(pointer: coarse)").matches,
-                window.innerWidth,
-                window.innerHeight,
-            );
-            bind();
-            S.call_app();
-        });
-        return;
-    }
-
-    const w = new Worker("./worker.js", { type: "module" });
-    worker = w;
-
-    w.addEventListener("message", async (e) => {
-        if (e.data.type === "error") { restart(); }
-        if (e.data.type === "ready") {
-            S.base = e.data.base;
-            sessionStorage.removeItem(MAIN_RELOAD_KEY);
-
-            for (;;) {
-                drain();
-                view();
-                const index = (S.base + COMMAND_RING.control) >> 2;
-                const write = Atomics.load(S.int32, index);
-                const result = Atomics.waitAsync(S.int32, index, write);
-                if (result.async) await result.value;
-            }
-        }
-    });
-
-    w.addEventListener("error", (e) => {
-        console.error("[worker] restart:", e.message);
-        restart();
-    });
-
-    w.postMessage({
-        type: "init",
-        payload: {
-            memory: S.memory,
-            pointer_coarse: window.matchMedia("(pointer: coarse)").matches,
-            viewport_width: window.innerWidth,
-            viewport_height: window.innerHeight,
-        },
-    });
-
+    await App.init(
+        window.matchMedia("(pointer: coarse)").matches,
+        window.innerWidth,
+        window.innerHeight,
+    );
     bind();
+    S.call_app();
 }
 
 function restart() {
     if (restarting) return;
     restarting = true;
 
-    worker?.terminate();
-    worker = null;
     S.buffer = null;
-
-    if (THREAD === "main") {
-        S.exports?.initialize();
-        S.base = S.exports?.arena_pointer() ?? S.base;
-        bind();
-        S.call_app();
-    } else {
-        start();
-    }
+    S.exports?.initialize();
+    S.base = S.exports?.arena_pointer() ?? S.base;
+    bind();
+    S.call_app();
 
     restarting = false;
-}
-
-async function try_recover_to_worker_thread() {
-    if (sessionStorage.getItem(MAIN_RELOAD_KEY)) return false;
-
-    sessionStorage.setItem(MAIN_RELOAD_KEY, "1");
-    await navigator.serviceWorker.ready.catch(() => {});
-    location.reload();
-    return true;
 }
 
 // === execute command ===
@@ -388,7 +319,6 @@ function push(frame) {
     view();
     if (!ring_push(EVENT_RING, frame)) return false;
 
-    Atomics.notify(S.int32, (S.base + EVENT_RING.control) >> 2);
     S.call_app();
     return true;
 }
