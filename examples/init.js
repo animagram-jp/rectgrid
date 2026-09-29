@@ -74,13 +74,6 @@ let bound = false;
 let restarting = false;
 let composing_element = null;
 
-const sw_registration = "serviceWorker" in navigator
-    ? navigator.serviceWorker.register("./sw.js").catch((err) => {
-        console.warn("SW registration failed:", err);
-        return null;
-    })
-    : Promise.resolve(null);
-
 start();
 
 // === start ===
@@ -186,7 +179,6 @@ function restart() {
 
 async function try_recover_to_worker_thread() {
     if (sessionStorage.getItem(MAIN_RELOAD_KEY)) return false;
-    if (!(await sw_registration)) return false;
 
     sessionStorage.setItem(MAIN_RELOAD_KEY, "1");
     await navigator.serviceWorker.ready.catch(() => {});
