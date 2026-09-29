@@ -54,6 +54,10 @@ jobs:
               working-directory: "./examples"
               run: rm -f app/README.md app/LICENSE
 
+            - name: "remove build intermediates from Pages artifact"
+              working-directory: "./examples"
+              run: rm -rf target
+
             - name: "setup Github Pages"
               uses: actions/configure-pages@v6
 
