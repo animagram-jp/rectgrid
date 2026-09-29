@@ -5,4 +5,5 @@
 Cargo.lock
 debug
 target
+examples/distribution/app
 examples/app

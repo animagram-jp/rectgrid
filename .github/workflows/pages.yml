@@ -28,15 +28,31 @@ jobs:
             - name: "add wasm32 target"
               run: rustup target add wasm32-unknown-unknown
 
-            - name: "install wasm-pack"
-              run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+            - name: "install wasm-bindgen-cli"
+              run: cargo install wasm-bindgen-cli --version 0.2.129
 
             - name: "cargo test"
               run: cargo test
 
-            - name: "wasm-pack build"
+            - name: "cargo test (examples)"
               working-directory: "./examples"
-              run: wasm-pack build --target web --out-dir app --out-name app
+              run: cargo test
+
+            - name: "cargo build (wasm32, main thread)"
+              working-directory: "./examples"
+              run: |
+                  RUSTFLAGS="-Clink-arg=--import-memory -Clink-arg=--max-memory=134217728" \
+                  cargo build --release --target wasm32-unknown-unknown
+
+            - name: "wasm-bindgen"
+              working-directory: "./examples"
+              run: |
+                  wasm-bindgen --target web --out-dir distribution/app --out-name app \
+                    target/wasm32-unknown-unknown/release/app.wasm
+
+            - name: "remove wasm-bindgen package boilerplate (no suppression flag exists)"
+              working-directory: "./examples"
+              run: rm -f distribution/app/README.md distribution/app/LICENSE
 
             - name: "setup Github Pages"
               uses: actions/configure-pages@v6
@@ -44,7 +60,7 @@ jobs:
             - name: "upload artifact as Github Pages"
               uses: actions/upload-pages-artifact@v5
               with:
-                path: "./examples"
+                path: "./examples/distribution"
 
             - name: "deploy to GitHub Pages"
               id: "deployment"

@@ -28,8 +28,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 # unit test
 cargo test
 
-# wasm build
-cd examples && wasm-pack build --target web --out-dir app --out-name app
+# unit test (examples)
+cd examples && cargo test
+
+# wasm build (examples; main thread, imported memory)
+cd examples
+RUSTFLAGS="-Clink-arg=--import-memory -Clink-arg=--max-memory=134217728" \
+cargo build --release --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir distribution/app --out-name app target/wasm32-unknown-unknown/release/app.wasm
 
 # auto formatter
 cargo +nightly fmt
