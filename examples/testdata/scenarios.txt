@@ -44,6 +44,17 @@ B_corner_resize 4 up cursor Section-None Unset
 B_corner_resize 4 up z Section-None_Article-Some(3) 2
 B_corner_resize 4 up removeclass Section-None_Article-Some(4) Highlighted
 C_drop_zone 0 down z Section-None_Article-Some(3) 3
+C_drop_zone 1 move translate Section-None_Article-Some(3) 410.000 15.000
+C_drop_zone 2 move translate Section-None_Article-Some(3) 420.000 40.000
+C_drop_zone 2 move addclass Section-None_Article-Some(4) Highlighted
+C_drop_zone 3 move translate Section-None_Article-Some(3) 430.000 60.000
+C_drop_zone 4 move translate Section-None_Article-Some(3) 430.000 0.000
+C_drop_zone 4 move removeclass Section-None_Article-Some(4) Highlighted
+C_drop_zone 5 move translate Section-None_Article-Some(3) 430.000 70.000
+C_drop_zone 5 move addclass Section-None_Article-Some(4) Highlighted
+C_drop_zone 6 up translate Section-None_Article-Some(3) 400.000 64.000
+C_drop_zone 6 up z Section-None_Article-Some(3) 2
+C_drop_zone 6 up removeclass Section-None_Article-Some(4) Highlighted
 D_fractional 0 down z Section-None_Article-Some(3) 3
 D_fractional 1 move translate Section-None_Article-Some(3) 415.340 15.680
 D_fractional 2 move translate Section-None_Article-Some(3) 457.760 51.260
