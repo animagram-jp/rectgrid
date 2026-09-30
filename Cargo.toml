@@ -1,6 +1,6 @@
 [package]
 name = "rectgrid"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Region operations on rectilinear grids with arbitrary unit systems."
@@ -13,3 +13,10 @@ exclude = ["examples/"]
 
 [dependencies]
 libm = "0.2"
+
+[features]
+default  = []
+geometry = []
+
+[package.metadata.docs.rs]
+all-features = true

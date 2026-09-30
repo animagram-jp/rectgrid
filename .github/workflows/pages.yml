@@ -34,7 +34,7 @@ jobs:
                   cargo install wasm-bindgen-cli --version "$version" --locked
 
             - name: "cargo test"
-              run: cargo test
+              run: cargo test --all-features
 
             - name: "cargo test (examples)"
               working-directory: "./examples"

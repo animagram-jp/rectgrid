@@ -5,6 +5,7 @@ extern crate core;
 use core::fmt::{Display, Formatter, Result};
 
 mod rectgrid;
+#[cfg(feature = "geometry")]
 pub mod geometry;
 pub use rectgrid::*;
 
