@@ -2,7 +2,7 @@
 !README.md
 !CONTRIBUTING.md
 
-Cargo.lock
+/Cargo.lock
 debug
 target
 examples/app

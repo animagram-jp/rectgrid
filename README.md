@@ -35,6 +35,7 @@ cd examples && cargo test
 cd examples
 RUSTFLAGS="-Clink-arg=--import-memory -Clink-arg=--max-memory=134217728" \
 cargo build --release --target wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version "$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" --locked
 wasm-bindgen --target web --out-dir app --out-name app target/wasm32-unknown-unknown/release/app.wasm
 
 # auto formatter
