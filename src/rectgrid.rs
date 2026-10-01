@@ -218,8 +218,8 @@ impl IncrementFunction {
                 }
                 Ok(Accumulator::VectorList(pxs))
             }
-            // The forward closure's boundary shape is unknown in general, so the inverse is a generic
-            // binary search (widen the range, then converge) closed over the same closure.
+            // The forward closure's boundary shape is unknown in general, so the inverse scans the
+            // segments in order (see forward_difference_inverse) over the same closure.
             Self::ForwardDifference(f) => {
                 let fwd = f.clone();
                 let forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>> = Box::new(move |x| {
@@ -235,74 +235,50 @@ impl IncrementFunction {
                     Ok(acc)
                 });
                 let inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> =
-                    Box::new(move |target| generic_binary_search_inverse(&f, target));
+                    Box::new(move |target| forward_difference_inverse(&f, target));
                 Ok(Accumulator::ForwardDifference { forward, inverse })
             }
         }
     }
 }
 
-/// Numerically inverts px to unit for a ForwardDifference definition (the only variant without an
-/// analytical or array-based inverse). Widens [lo, hi] until it brackets target, then binary searches.
+/// Inverts px to unit for a ForwardDifference definition (the only variant without an analytical
+/// or array-based inverse).
+/// forward is piecewise linear (`S(k) + f(k) * (x - k)` on [k, k+1], S(k) = f(0) + ... + f(k-1)), so
+/// the inverse is exact: find the segment k with S(k) <= target <= S(k+1), then solve for the
+/// fraction in closed form. The sums are accumulated in the same order as forward, so
+/// `inverse(forward(x))` returns `x` up to rounding of the final division.
 /// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
-fn generic_binary_search_inverse(
+fn forward_difference_inverse(
     f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
     target: Px,
 ) -> Result<Unit, RectgridError> {
     let target = target.get();
-    let eval = |x: f64| -> Result<Px, RectgridError> {
-        let n = libm::floor(x) as u32;
-        let frac = x - n as f64;
-        let mut acc = Px::new(0.0);
-        for k in 0..n {
-            acc += f(k)?;
-        }
-        if frac != 0.0 {
-            acc += f(n)? * frac;
-        }
-        Ok(acc)
-    };
-
-    let mut lo = 0.0;
-    let mut hi = 1.0;
-    loop {
-        match eval(hi) {
-            Ok(px) if px.get() >= target => break,
-            Ok(_) => {
-                lo = hi;
-                hi *= 2.0;
-            }
-            // Reached the end of the domain; check whether target is reachable within that range.
-            Err(RectgridError::OutOfIndex(last)) => {
-                hi = last as f64;
-                if eval(hi)?.get() < target {
-                    return Err(RectgridError::OutOfIndex(last));
-                }
-                break;
-            }
-            Err(e) => return Err(e),
-        }
+    if target.is_nan() {
+        return Err(RectgridError::InvalidDefinition);
+    }
+    if target <= 0.0 {
+        return Ok(Unit::new(0.0));
     }
 
-    const EPSILON: f64 = 1e-9;
-    for _ in 0..64 {
-        if hi - lo < EPSILON {
-            break;
+    let mut accumulated = 0.0;
+    for k in 0..=u32::MAX {
+        // Err(OutOfIndex(last)) means the domain ended before reaching target: propagated as is.
+        let step = f(k)?.get();
+        let next = accumulated + step;
+        if next >= target {
+            let frac = if step == 0.0 { 0.0 } else { ((target - accumulated) / step).min(1.0) };
+            return Ok(Unit::new(k as f64 + frac));
         }
-        let mid = (lo + hi) / 2.0;
-        if eval(mid)?.get() < target {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
+        accumulated = next;
     }
-    Ok(Unit::new((lo + hi) / 2.0))
+    Err(RectgridError::OutOfIndex(u32::MAX))
 }
 
 /// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
 /// Each variant holds only the data it needs: Scale is a bare f64 (no boxing), VectorList holds the
 /// array directly, and ForwardDifference is the only case still holding boxed closures because its
-/// inverse requires generic binary search.
+/// inverse requires a segment scan.
 pub enum Accumulator {
     Scale(f64),
     VectorList(Vec<Px>),
@@ -400,7 +376,7 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// Inverts px to unit. Scale/VectorList resolve analytically or via array search; ForwardDifference
-    /// falls back to binary search (see Accumulator::inverse).
+    /// scans its segments (see forward_difference_inverse).
     /// point may be passed as-is as an external px coordinate (e.g. viewport); it is corrected to a local coordinate by subtracting origin before conversion.
     /// Caller contract: each axis's accumulator must be monotonically non-decreasing over Unit >= 0.
     /// If it is not (e.g. a negative value given to Scale, or ForwardDifference returning a decreasing difference), the result is not guaranteed.
@@ -1085,5 +1061,177 @@ mod tests {
             drag_resize(&grid, [Px::new(1100.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
         assert_eq!(resized.base[0].get(), 3.0);
         assert_eq!(resized.offset[0].get(), 1.0);
+    }
+    // ---- ForwardDifference inverse: exact segment scan vs. the pre-refinement binary search ----
+
+    /// Pre-refinement inverse (unit-space range widening + bisection, absolute tolerance 1e-9),
+    /// kept for comparison only.
+    fn legacy_inverse(
+        f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
+        target: Px,
+    ) -> Result<Unit, RectgridError> {
+        let target = target.get();
+        let eval = |x: f64| -> Result<Px, RectgridError> {
+            let n = libm::floor(x) as u32;
+            let frac = x - n as f64;
+            let mut acc = Px::new(0.0);
+            for k in 0..n {
+                acc += f(k)?;
+            }
+            if frac != 0.0 {
+                acc += f(n)? * frac;
+            }
+            Ok(acc)
+        };
+
+        let mut lo = 0.0;
+        let mut hi = 1.0;
+        loop {
+            match eval(hi) {
+                Ok(px) if px.get() >= target => break,
+                Ok(_) => {
+                    lo = hi;
+                    hi *= 2.0;
+                }
+                Err(RectgridError::OutOfIndex(last)) => {
+                    hi = last as f64;
+                    if eval(hi)?.get() < target {
+                        return Err(RectgridError::OutOfIndex(last));
+                    }
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        const EPSILON: f64 = 1e-9;
+        for _ in 0..64 {
+            if hi - lo < EPSILON {
+                break;
+            }
+            let mid = (lo + hi) / 2.0;
+            if eval(mid)?.get() < target {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Ok(Unit::new((lo + hi) / 2.0))
+    }
+
+    /// A non-uniform increment (1.0 ... 1.016) that has no closed form.
+    fn wavy(k: u32) -> Result<Px, RectgridError> {
+        Ok(Px::new(1.0 + libm::fabs(libm::sin(k as f64 * 0.37)) * 0.01 + 1e-3 * (k % 7) as f64))
+    }
+
+    #[test]
+    fn forward_difference_inverse_roundtrip_is_exact() {
+        let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
+        let acc = IncrementFunction::ForwardDifference(f.clone()).accumulate().unwrap();
+
+        let mut worst_new = 0.0f64;
+        let mut worst_legacy = 0.0f64;
+        for k in 0..2000 {
+            let x = 12345.0 + k as f64 * 0.0137;
+            let px = acc.forward(x).unwrap();
+            worst_new = worst_new.max((acc.inverse(px).unwrap().get() - x).abs());
+            // legacy costs ~70 forward evaluations per call, so sample it sparsely
+            if k % 100 == 0 {
+                worst_legacy = worst_legacy.max((legacy_inverse(&f, px).unwrap().get() - x).abs());
+            }
+        }
+        // one ulp of 12345 is 1.8e-12
+        assert!(worst_new <= 1e-11, "worst roundtrip error {worst_new:e}");
+        // legacy stops bisecting at |hi - lo| < 1e-9 (measured 4.7e-10)
+        assert!(worst_legacy >= 1e-10, "legacy worst roundtrip error {worst_legacy:e}");
+    }
+
+    #[test]
+    fn forward_difference_inverse_matches_forward_across_scales() {
+        let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
+        let acc = IncrementFunction::ForwardDifference(f).accumulate().unwrap();
+        for x in [0.25, 0.999, 1.0, 3.5, 99.75, 1000.125, 50_000.5] {
+            let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
+            assert!((back - x).abs() <= 1e-11 * (1.0 + x), "x = {x}: {back}");
+        }
+    }
+
+    #[test]
+    fn forward_difference_inverse_constant_steps_are_exact() {
+        let acc = IncrementFunction::ForwardDifference(Rc::new(|_| Ok(Px::new(10.0))))
+            .accumulate()
+            .unwrap();
+        assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
+        assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
+        assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
+        assert_eq!(acc.inverse(Px::new(-5.0)).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn forward_difference_inverse_zero_step_returns_start_of_plateau() {
+        // steps 10, 0, 10: px 10 is reached at unit 1 and held until unit 2
+        let acc = IncrementFunction::ForwardDifference(Rc::new(|k| {
+            Ok(Px::new(if k == 1 { 0.0 } else { 10.0 }))
+        }))
+        .accumulate()
+        .unwrap();
+        assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
+        assert_eq!(acc.inverse(Px::new(15.0)).unwrap().get(), 2.5);
+    }
+
+    #[test]
+    fn forward_difference_inverse_finite_domain_boundaries() {
+        // three steps of 10 (domain 0..=3); the closure reports OutOfIndex(3) past the end
+        let acc = IncrementFunction::ForwardDifference(Rc::new(|k| {
+            if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
+        }))
+        .accumulate()
+        .unwrap();
+        assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
+        assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 3.0);
+        assert!(matches!(acc.inverse(Px::new(30.5)), Err(RectgridError::OutOfIndex(3))));
+    }
+
+    #[test]
+    fn forward_difference_inverse_rejects_nan() {
+        let acc = IncrementFunction::ForwardDifference(Rc::new(|_| Ok(Px::new(1.0))))
+            .accumulate()
+            .unwrap();
+        assert!(matches!(acc.inverse(Px::new(f64::NAN)), Err(RectgridError::InvalidDefinition)));
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_forward_difference_inverse_new_vs_legacy() {
+        fn time_ns(iterations: usize, mut f: impl FnMut() -> f64) -> f64 {
+            let mut sink = f();
+            let start = std::time::Instant::now();
+            for _ in 0..iterations {
+                sink += f();
+            }
+            let elapsed = start.elapsed().as_nanos() as f64 / iterations as f64;
+            core::hint::black_box(sink);
+            elapsed
+        }
+
+        for n in [10u32, 1_000, 100_000] {
+            let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
+            let acc = IncrementFunction::ForwardDifference(f.clone()).accumulate().unwrap();
+            let target = acc.forward(n as f64 * 0.7 + 0.3).unwrap();
+
+            let fast = (30_000_000 / n as usize).max(10);
+            let slow = (400_000 / n as usize).max(3);
+            let accumulator = &acc;
+            let forward_ns =
+                time_ns(fast, || accumulator.forward(n as f64 * 0.7 + 0.3).unwrap().get());
+            let new_ns = time_ns(fast, || accumulator.inverse(target).unwrap().get());
+            let legacy_f = f.clone();
+            let legacy_ns = time_ns(slow, || legacy_inverse(&legacy_f, target).unwrap().get());
+            std::println!(
+                "forward-difference inverse, target at unit ~{:7.0}: forward {forward_ns:12.1} ns  new {new_ns:12.1} ns  legacy {legacy_ns:14.1} ns  legacy/new {:.1}",
+                n as f64 * 0.7 + 0.3,
+                legacy_ns / new_ns
+            );
+        }
     }
 }
