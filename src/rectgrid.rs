@@ -424,33 +424,30 @@ impl<const D: usize> RectGrid<D> {
         self.accumulator[d].forward(unit.get())
     }
 
-    /// Converts multiple unit coordinate points to px. Returns Err for a point with an unevaluable axis (evaluation stops per point; other points are unaffected).
+    /// Converts multiple unit coordinate points to px. Each axis is evaluated independently: a point
+    /// gives one `Result` per axis, so an unevaluable axis (Err, e.g. OutOfIndex(last) of that axis's
+    /// domain) does not affect the other axes or the other points.
     ///
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
     /// use rectgrid::RectgridError;
-    /// let grid = RectGrid::<1>::new(
-    ///     [Px::new(0.0)],
-    ///     [IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)])],
+    /// let grid = RectGrid::<2>::new(
+    ///     [Px::new(0.0), Px::new(0.0)],
+    ///     [
+    ///         IncrementFunction::Scale(100.0),
+    ///         IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)]),
+    ///     ],
     /// ).unwrap();
-    /// let points = alloc::vec![[Unit::new(0.5)], [Unit::new(5.0)]];
+    /// let points = alloc::vec![[Unit::new(2.0), Unit::new(0.5)], [Unit::new(2.0), Unit::new(5.0)]];
     /// let px = grid.point_as_px(&points);
-    /// assert_eq!(px[0].as_ref().unwrap()[0].get(), 5.0);
-    /// // the 2nd point exceeds the VectorList's domain (0..=1), so it is OutOfIndex
-    /// assert!(matches!(px[1], Err(RectgridError::OutOfIndex(1))));
+    /// assert_eq!(px[0][1].as_ref().unwrap().get(), 5.0);
+    /// // the 2nd point's second axis exceeds the VectorList's domain (0..=1): only that axis is Err
+    /// assert_eq!(px[1][0].as_ref().unwrap().get(), 200.0);
+    /// assert!(matches!(px[1][1], Err(RectgridError::OutOfIndex(1))));
     /// ```
-    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<Result<[Px; D], RectgridError>> {
-        points
-            .iter()
-            .map(|pt| -> Result<[Px; D], RectgridError> {
-                let mut px = [Px::new(0.0); D];
-                for d in 0..D {
-                    px[d] = self.unit_to_px(d, &pt[d])?;
-                }
-                Ok(px)
-            })
-            .collect()
+    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Result<Px, RectgridError>; D]> {
+        points.iter().map(|pt| from_fn(|d| self.unit_to_px(d, &pt[d]))).collect()
     }
 
     /// unit_to_px for an edge added by `extend`: past the end of a finite domain (OutOfIndex) the
@@ -466,7 +463,7 @@ impl<const D: usize> RectGrid<D> {
     /// point may be passed as-is in viewport coordinates (origin is subtracted internally).
     /// extend is added to base/offset in unit space before conversion to px
     /// (if converted to px individually and added afterward, the width would drift depending on boundary position for a nonlinear accumulator).
-    /// Returns None when the box is not evaluable (box_as_px would return Err for it, e.g. it lies,
+    /// Returns None when the box is not evaluable (box_as_px is Err on some axis for it, e.g. it lies,
     /// even partly, outside a finite domain): such a box is never hit. An extend edge past the end of a
     /// finite domain is clipped at the end (see unit_to_px_clipped).
     /// Otherwise: (whether it hit, base_px without extend, offset_px without extend).
@@ -500,19 +497,22 @@ impl<const D: usize> RectGrid<D> {
     /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
     /// base_px/offset_px are the px-converted values of the unit coordinates base/base+offset (same shape as contains' return value).
     fn parameter_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
-        from_fn(|d| {
-            let width = offset_px[d] - base_px[d];
-            if width.get() == 0.0 {
-                Parameter::new(0.0)
-            } else {
-                Parameter::new((point[d] - base_px[d]) / width)
-            }
-        })
+        from_fn(|d| Self::parameter_axis(point[d], base_px[d], offset_px[d]))
+    }
+
+    /// One axis of parameter_from_px: `(point - base) / (far - base)`, 0.0 for a zero-width axis.
+    fn parameter_axis(point: Px, base_px: Px, far_px: Px) -> Parameter {
+        let width = far_px - base_px;
+        if width.get() == 0.0 {
+            Parameter::new(0.0)
+        } else {
+            Parameter::new((point - base_px) / width)
+        }
     }
 
     /// Returns the highest index among the boxes that point hits (a higher index in boxes is treated as higher priority).
     /// When multiple boxes hit, the higher index wins, so the scan runs from the tail.
-    /// A box that is not evaluable (box_as_px returns Err for it) is never hit. An extend that reaches
+    /// A box that is not evaluable (box_as_px is Err on some axis for it) is never hit. An extend that reaches
     /// past the end of a finite domain is clipped at the end.
     ///
     /// ```
@@ -600,9 +600,11 @@ impl<const D: usize> RectGrid<D> {
     /// `ξ_d = (point_d − base_d) / offset_d`
     /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
     /// point may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
-    /// For a box that is not evaluable (box_as_px returns Err for it, e.g. it lies, even partly,
-    /// outside a finite domain) the parameter is undefined: every axis is NaN, which compares false
-    /// everywhere (corner_test reports no parameter for it).
+    /// Each axis is evaluated independently and gives its own `Result`: an axis whose base or
+    /// base + offset cannot be evaluated (e.g. it lies, even partly, outside that axis's finite
+    /// domain) is Err (OutOfIndex(last) carries the last valid unit, enough to clamp with
+    /// unit_to_px), and the other axes are unaffected. Non-finite inputs are not checked: they give
+    /// a NaN or infinite parameter inside Ok.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
@@ -612,34 +614,28 @@ impl<const D: usize> RectGrid<D> {
     /// ).unwrap();
     /// let bx = BBox::new([Unit::new(1.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
     /// let parameter = grid.get_parameter([Px::new(300.0), Px::new(16.0)], bx);
-    /// assert!((parameter[0].get() - 0.5).abs() < 1e-9);
-    /// assert!((parameter[1].get() - 0.25).abs() < 1e-9);
+    /// assert!((parameter[0].as_ref().unwrap().get() - 0.5).abs() < 1e-9);
+    /// assert!((parameter[1].as_ref().unwrap().get() - 0.25).abs() < 1e-9);
     /// // outside the box (base side), parameter goes negative
     /// let parameter = grid.get_parameter([Px::new(100.0), Px::new(0.0)], bx);
-    /// assert!((parameter[0].get() - (-0.5)).abs() < 1e-9);
+    /// assert!((parameter[0].as_ref().unwrap().get() - (-0.5)).abs() < 1e-9);
     /// ```
-    pub fn get_parameter(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
-        let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
-        let mut base_px = [Px::new(0.0); D];
-        let mut offset_px = [Px::new(0.0); D];
-        for d in 0..D {
-            match (
-                self.unit_to_px(d, &bx.base[d]),
-                self.unit_to_px(d, &(bx.base[d] + bx.offset[d])),
-            ) {
-                (Ok(base), Ok(far)) => {
-                    base_px[d] = base;
-                    offset_px[d] = far;
-                }
-                _ => return [Parameter::new(f64::NAN); D],
-            }
-        }
-        Self::parameter_from_px(local, base_px, offset_px)
+    pub fn get_parameter(
+        &self,
+        point: [Px; D],
+        bx: BBox<D>,
+    ) -> [Result<Parameter, RectgridError>; D] {
+        from_fn(|d| -> Result<Parameter, RectgridError> {
+            let base = self.unit_to_px(d, &bx.base[d])?;
+            let far = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))?;
+            Ok(Self::parameter_axis(point[d] - self.origin[d], base, far))
+        })
     }
 
-    /// Converts multiple BBox to (base_px, offset_px). offset_px is the actual side length accounting for base position
+    /// Converts multiple BBox to (base_px, offset_px) per axis. offset_px is the actual side length accounting for base position
     /// (unit_to_px(base+offset) - unit_to_px(base)), which stays correct for base position even under a nonlinear
-    /// accumulator (ForwardDifference/VectorList). Returns Err for a box with an unevaluable axis (evaluation stops per box; other boxes are unaffected).
+    /// accumulator (ForwardDifference/VectorList). Each axis is evaluated independently: a box gives one `Result` per axis,
+    /// so an unevaluable axis (Err, e.g. OutOfIndex(last) of that axis's domain) does not affect the other axes or the other boxes.
     ///
     /// ```
     /// extern crate alloc;
@@ -647,24 +643,19 @@ impl<const D: usize> RectGrid<D> {
     /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(100.0)]).unwrap();
     /// let boxes = alloc::vec![BBox::new([Unit::new(1.0)], [Unit::new(2.0)])];
     /// let result = grid.box_as_px(&boxes);
-    /// let (base_px, offset_px) = result[0].as_ref().unwrap();
-    /// assert_eq!(base_px[0].get(), 100.0);
-    /// assert_eq!(offset_px[0].get(), 200.0);
+    /// let (base_px, offset_px) = result[0][0].as_ref().unwrap();
+    /// assert_eq!(base_px.get(), 100.0);
+    /// assert_eq!(offset_px.get(), 200.0);
     /// ```
-    pub fn box_as_px(
-        &self,
-        boxes: &Vec<BBox<D>>,
-    ) -> Vec<Result<([Px; D], [Px; D]), RectgridError>> {
+    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<[Result<(Px, Px), RectgridError>; D]> {
         boxes
             .iter()
-            .map(|bx| -> Result<([Px; D], [Px; D]), RectgridError> {
-                let mut base_px = [Px::new(0.0); D];
-                let mut offset_px = [Px::new(0.0); D];
-                for d in 0..D {
-                    base_px[d] = self.unit_to_px(d, &bx.base[d])?;
-                    offset_px[d] = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))? - base_px[d];
-                }
-                Ok((base_px, offset_px))
+            .map(|bx| {
+                from_fn(|d| -> Result<(Px, Px), RectgridError> {
+                    let base = self.unit_to_px(d, &bx.base[d])?;
+                    let far = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))?;
+                    Ok((base, far - base))
+                })
             })
             .collect()
     }
@@ -747,7 +738,14 @@ pub fn corner_test<const D: usize>(
     if !bx.has_size() {
         return (None, None);
     }
-    let parameter = grid.get_parameter(point, *bx);
+    // an axis that cannot be evaluated leaves no parameter to test against
+    let mut parameter = [Parameter::new(0.0); D];
+    for (axis, result) in grid.get_parameter(point, *bx).into_iter().enumerate() {
+        match result {
+            Ok(value) => parameter[axis] = value,
+            Err(_) => return (None, None),
+        }
+    }
     let margin: [(f64, f64); D] = from_fn(|d| match extend {
         Some((eb, eo)) => {
             let offset = bx.offset()[d].get();
@@ -1029,7 +1027,7 @@ mod tests {
         )
         .unwrap();
         let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
-        assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(RectgridError::OutOfIndex(1))));
     }
 
     #[test]
@@ -1268,23 +1266,23 @@ mod tests {
 
     #[test]
     fn hit_test_box_straddling_the_domain_end_is_not_evaluable() {
-        // base inside the domain, base + offset beyond it: box_as_px reports Err for such a box
+        // base inside the domain, base + offset beyond it: box_as_px reports Err on that axis
         let grid = vector_list_grid(&[0.0, 10.0]);
         let boxes = alloc::vec![unit_box(0.5, 1.0)];
-        assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(RectgridError::OutOfIndex(1))));
         assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, None), None);
     }
 
     #[test]
-    fn get_parameter_of_unevaluable_box_is_nan() {
+    fn get_parameter_of_unevaluable_box_is_err_on_that_axis() {
         let grid = vector_list_grid(&[0.0, 10.0]);
         for bx in [unit_box(5.0, 1.0), unit_box(0.5, 1.0)] {
             let parameter = grid.get_parameter([Px::new(5.0)], bx);
-            assert!(parameter[0].get().is_nan());
+            assert!(matches!(parameter[0], Err(RectgridError::OutOfIndex(1))));
         }
         // an evaluable box is unaffected
         let parameter = grid.get_parameter([Px::new(5.0)], unit_box(0.0, 1.0));
-        assert_eq!(parameter[0].get(), 0.5);
+        assert_eq!(parameter[0].as_ref().unwrap().get(), 0.5);
     }
 
     #[test]
@@ -1371,7 +1369,10 @@ mod tests {
         .unwrap();
         let boxes = alloc::vec![unit_box(1.0, 1.0)];
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), None);
-        assert!(grid.get_parameter([Px::new(0.0)], boxes[0])[0].get().is_nan());
+        assert!(matches!(
+            grid.get_parameter([Px::new(0.0)], boxes[0])[0],
+            Err(RectgridError::InvalidDefinition)
+        ));
         // an error is not clipped away as if it were a domain end
         let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
@@ -1470,5 +1471,104 @@ mod tests {
             let resized = drag_resize(&grid, [pointer], &bx, [Some(false)]).unwrap();
             assert_eq!(resized.offset()[0].get(), (k - 2) as f64, "k = {k}");
         }
+    }
+
+    // ---- axes are evaluated independently: one Result per axis ----
+
+    /// axis 0: VectorList [0, 10, 30] (last valid unit 2), axis 1: VectorList [0, 5] (last 1),
+    /// axis 2: Scale(100) (never fails)
+    fn mixed_grid() -> RectGrid<3> {
+        RectGrid::<3>::new(
+            [Px::new(0.0), Px::new(0.0), Px::new(0.0)],
+            [
+                IncrementFunction::VectorList(alloc::vec![
+                    Px::new(0.0),
+                    Px::new(10.0),
+                    Px::new(30.0)
+                ]),
+                IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(5.0)]),
+                IncrementFunction::Scale(100.0),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn box3(base: [f64; 3], offset: [f64; 3]) -> BBox<3> {
+        BBox::new(base.map(Unit::new), offset.map(Unit::new))
+    }
+
+    #[test]
+    fn box_as_px_reports_each_axis_separately() {
+        let grid = mixed_grid();
+        // axis 0 inside, axis 1 beyond (its last is 1), axis 2 fine
+        let result = grid.box_as_px(&alloc::vec![box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0])]);
+        let [axis0, axis1, axis2] = &result[0];
+        let (base0, size0) = axis0.as_ref().unwrap();
+        assert_eq!((base0.get(), size0.get()), (0.0, 10.0));
+        assert!(matches!(axis1, Err(RectgridError::OutOfIndex(1))));
+        let (base2, size2) = axis2.as_ref().unwrap();
+        assert_eq!((base2.get(), size2.get()), (200.0, 100.0));
+
+        // several failing axes are all reported, each with its own last index
+        let result = grid.box_as_px(&alloc::vec![box3([5.0, 3.0, 0.0], [1.0, 1.0, 1.0])]);
+        assert!(matches!(result[0][0], Err(RectgridError::OutOfIndex(2))));
+        assert!(matches!(result[0][1], Err(RectgridError::OutOfIndex(1))));
+        assert!(result[0][2].is_ok());
+
+        // only the far edge out: that axis fails, the others do not
+        let result = grid.box_as_px(&alloc::vec![box3([1.5, 0.0, 0.0], [1.0, 1.0, 1.0])]);
+        assert!(matches!(result[0][0], Err(RectgridError::OutOfIndex(2))));
+        assert!(result[0][1].is_ok() && result[0][2].is_ok());
+    }
+
+    #[test]
+    fn point_as_px_reports_each_axis_separately() {
+        let grid = mixed_grid();
+        let result = grid.point_as_px(&alloc::vec![
+            [Unit::new(1.5), Unit::new(0.5), Unit::new(2.0)],
+            [Unit::new(2.5), Unit::new(5.0), Unit::new(2.0)],
+        ]);
+        assert_eq!(result[0][0].as_ref().unwrap().get(), 20.0);
+        assert_eq!(result[0][1].as_ref().unwrap().get(), 2.5);
+        assert_eq!(result[0][2].as_ref().unwrap().get(), 200.0);
+        assert!(matches!(result[1][0], Err(RectgridError::OutOfIndex(2))));
+        assert!(matches!(result[1][1], Err(RectgridError::OutOfIndex(1))));
+        assert_eq!(result[1][2].as_ref().unwrap().get(), 200.0);
+    }
+
+    #[test]
+    fn get_parameter_reports_each_axis_separately() {
+        let grid = mixed_grid();
+        let bx = box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0]);
+        let parameter = grid.get_parameter([Px::new(5.0), Px::new(0.0), Px::new(250.0)], bx);
+        assert_eq!(parameter[0].as_ref().unwrap().get(), 0.5);
+        assert!(matches!(parameter[1], Err(RectgridError::OutOfIndex(1))));
+        assert_eq!(parameter[2].as_ref().unwrap().get(), 0.5);
+    }
+
+    #[test]
+    fn a_failed_axis_can_be_clamped_with_the_last_index_it_reports() {
+        // the caller rounds the unevaluable unit to the end of that axis's domain
+        let grid = mixed_grid();
+        let beyond = Unit::new(7.0);
+        let Err(RectgridError::OutOfIndex(last)) = grid.unit_to_px(1, &beyond) else {
+            panic!("expected OutOfIndex");
+        };
+        assert_eq!(last, 1);
+        assert_eq!(grid.unit_to_px(1, &Unit::new(last as f64)).unwrap().get(), 5.0);
+    }
+
+    #[test]
+    fn corner_test_reports_nothing_when_any_axis_cannot_be_evaluated() {
+        let grid = mixed_grid();
+        let bx = box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0]); // axis 1 beyond
+        let (parameter, corner) =
+            corner_test(&grid, [Px::new(5.0), Px::new(0.0), Px::new(250.0)], &bx, 0.1, None);
+        assert!(parameter.is_none() && corner.is_none());
+        // the same box on an evaluable axis set is found as before
+        let bx = box3([0.0, 0.0, 2.0], [1.0, 1.0, 1.0]);
+        let (parameter, _) =
+            corner_test(&grid, [Px::new(5.0), Px::new(2.5), Px::new(250.0)], &bx, 0.1, None);
+        assert!(parameter.is_some());
     }
 }

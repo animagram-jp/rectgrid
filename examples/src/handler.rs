@@ -98,11 +98,11 @@ impl Handler {
         let boxes: Vec<BBox<2>> = self.articles.iter().map(|(_, bx)| *bx).collect();
         let resolved = self.rectgrid.box_as_px(&boxes);
         for (z, ((n, bx), px_result)) in self.articles.iter().zip(resolved).enumerate() {
-            if let Ok((base_px, offset_px)) = px_result {
-                commands.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
+            if let [Ok((base_x, size_x)), Ok((base_y, size_y))] = px_result {
+                commands.push(translate_card(*n, base_x.get(), base_y.get()));
                 if bx.has_size() {
-                    commands.push(size_px(*n, StyleProperty::Width, offset_px[0].get()));
-                    commands.push(size_px(*n, StyleProperty::Height, offset_px[1].get()));
+                    commands.push(size_px(*n, StyleProperty::Width, size_x.get()));
+                    commands.push(size_px(*n, StyleProperty::Height, size_y.get()));
                 }
             }
             commands.push(z_index(*n, z as i32));
@@ -185,11 +185,11 @@ impl Handler {
         let resolved = self.rectgrid.box_as_px(&boxes);
         let mut commands = vec![grid_background(section_width_px)];
         for ((n, bx), px_result) in self.articles.iter().zip(resolved) {
-            let Ok((base_px, offset_px)) = px_result else { continue };
-            commands.push(translate_card(*n, base_px[0].get(), base_px[1].get()));
+            let [Ok((base_x, size_x)), Ok((base_y, size_y))] = px_result else { continue };
+            commands.push(translate_card(*n, base_x.get(), base_y.get()));
             if bx.has_size() {
-                commands.push(size_px(*n, StyleProperty::Width, offset_px[0].get()));
-                commands.push(size_px(*n, StyleProperty::Height, offset_px[1].get()));
+                commands.push(size_px(*n, StyleProperty::Width, size_x.get()));
+                commands.push(size_px(*n, StyleProperty::Height, size_y.get()));
             }
         }
         commands.extend(self.drop_zone_commands());
