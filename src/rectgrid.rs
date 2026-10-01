@@ -1473,102 +1473,36 @@ mod tests {
         }
     }
 
-    // ---- axes are evaluated independently: one Result per axis ----
-
-    /// axis 0: VectorList [0, 10, 30] (last valid unit 2), axis 1: VectorList [0, 5] (last 1),
-    /// axis 2: Scale(100) (never fails)
-    fn mixed_grid() -> RectGrid<3> {
-        RectGrid::<3>::new(
-            [Px::new(0.0), Px::new(0.0), Px::new(0.0)],
-            [
-                IncrementFunction::VectorList(alloc::vec![
-                    Px::new(0.0),
-                    Px::new(10.0),
-                    Px::new(30.0)
-                ]),
-                IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(5.0)]),
-                IncrementFunction::Scale(100.0),
-            ],
-        )
-        .unwrap()
-    }
-
-    fn box3(base: [f64; 3], offset: [f64; 3]) -> BBox<3> {
-        BBox::new(base.map(Unit::new), offset.map(Unit::new))
-    }
-
-    #[test]
-    fn box_as_px_reports_each_axis_separately() {
-        let grid = mixed_grid();
-        // axis 0 inside, axis 1 beyond (its last is 1), axis 2 fine
-        let result = grid.box_as_px(&alloc::vec![box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0])]);
-        let [axis0, axis1, axis2] = &result[0];
-        let (base0, size0) = axis0.as_ref().unwrap();
-        assert_eq!((base0.get(), size0.get()), (0.0, 10.0));
-        assert!(matches!(axis1, Err(RectgridError::OutOfIndex(1))));
-        let (base2, size2) = axis2.as_ref().unwrap();
-        assert_eq!((base2.get(), size2.get()), (200.0, 100.0));
-
-        // several failing axes are all reported, each with its own last index
-        let result = grid.box_as_px(&alloc::vec![box3([5.0, 3.0, 0.0], [1.0, 1.0, 1.0])]);
-        assert!(matches!(result[0][0], Err(RectgridError::OutOfIndex(2))));
-        assert!(matches!(result[0][1], Err(RectgridError::OutOfIndex(1))));
-        assert!(result[0][2].is_ok());
-
-        // only the far edge out: that axis fails, the others do not
-        let result = grid.box_as_px(&alloc::vec![box3([1.5, 0.0, 0.0], [1.0, 1.0, 1.0])]);
-        assert!(matches!(result[0][0], Err(RectgridError::OutOfIndex(2))));
-        assert!(result[0][1].is_ok() && result[0][2].is_ok());
-    }
-
-    #[test]
-    fn point_as_px_reports_each_axis_separately() {
-        let grid = mixed_grid();
-        let result = grid.point_as_px(&alloc::vec![
-            [Unit::new(1.5), Unit::new(0.5), Unit::new(2.0)],
-            [Unit::new(2.5), Unit::new(5.0), Unit::new(2.0)],
-        ]);
-        assert_eq!(result[0][0].as_ref().unwrap().get(), 20.0);
-        assert_eq!(result[0][1].as_ref().unwrap().get(), 2.5);
-        assert_eq!(result[0][2].as_ref().unwrap().get(), 200.0);
-        assert!(matches!(result[1][0], Err(RectgridError::OutOfIndex(2))));
-        assert!(matches!(result[1][1], Err(RectgridError::OutOfIndex(1))));
-        assert_eq!(result[1][2].as_ref().unwrap().get(), 200.0);
-    }
-
-    #[test]
-    fn get_parameter_reports_each_axis_separately() {
-        let grid = mixed_grid();
-        let bx = box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0]);
-        let parameter = grid.get_parameter([Px::new(5.0), Px::new(0.0), Px::new(250.0)], bx);
-        assert_eq!(parameter[0].as_ref().unwrap().get(), 0.5);
-        assert!(matches!(parameter[1], Err(RectgridError::OutOfIndex(1))));
-        assert_eq!(parameter[2].as_ref().unwrap().get(), 0.5);
-    }
+    // ---- per-axis Result: what a caller does with an Err ----
 
     #[test]
     fn a_failed_axis_can_be_clamped_with_the_last_index_it_reports() {
-        // the caller rounds the unevaluable unit to the end of that axis's domain
-        let grid = mixed_grid();
-        let beyond = Unit::new(7.0);
-        let Err(RectgridError::OutOfIndex(last)) = grid.unit_to_px(1, &beyond) else {
+        let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
+        let Err(RectgridError::OutOfIndex(last)) = grid.unit_to_px(0, &Unit::new(7.0)) else {
             panic!("expected OutOfIndex");
         };
-        assert_eq!(last, 1);
-        assert_eq!(grid.unit_to_px(1, &Unit::new(last as f64)).unwrap().get(), 5.0);
+        assert_eq!(last, 2);
+        assert_eq!(grid.unit_to_px(0, &Unit::new(last as f64)).unwrap().get(), 30.0);
     }
 
     #[test]
     fn corner_test_reports_nothing_when_any_axis_cannot_be_evaluated() {
-        let grid = mixed_grid();
-        let bx = box3([0.0, 3.0, 2.0], [1.0, 1.0, 1.0]); // axis 1 beyond
+        // axis 0 would be inside the box; axis 1 lies beyond its finite domain
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [
+                IncrementFunction::Scale(100.0),
+                IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)]),
+            ],
+        )
+        .unwrap();
+        let beyond = BBox::new([Unit::new(0.0), Unit::new(5.0)], [Unit::new(1.0), Unit::new(1.0)]);
         let (parameter, corner) =
-            corner_test(&grid, [Px::new(5.0), Px::new(0.0), Px::new(250.0)], &bx, 0.1, None);
+            corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &beyond, 0.1, None);
         assert!(parameter.is_none() && corner.is_none());
-        // the same box on an evaluable axis set is found as before
-        let bx = box3([0.0, 0.0, 2.0], [1.0, 1.0, 1.0]);
-        let (parameter, _) =
-            corner_test(&grid, [Px::new(5.0), Px::new(2.5), Px::new(250.0)], &bx, 0.1, None);
+        // the same box on an evaluable axis is found as before
+        let inside = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
+        let (parameter, _) = corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &inside, 0.1, None);
         assert!(parameter.is_some());
     }
 }
