@@ -40,17 +40,20 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
     let proj_x = x1 + t * vx;
     let proj_y = y1 + t * vy;
 
-    let dx = px - proj_x;
-    let dy = py - proj_y;
-    let distance = libm::sqrt(dx * dx + dy * dy);
-
-    let cross = vx * wy - vy * wx;
-    let sign = if cross < 0.0 { -1.0 } else { 1.0 };
+    // |cross| / |v| is formed from differences only. Subtracting the absolute projected point
+    // (x1 + t * vx) from the query would lose digits in proportion to the coordinates' magnitude
+    // (about 1e-11 relative at an offset of 1e6, against 1e-16 here).
+    let signed_distance = if length_squared == 0.0 {
+        libm::sqrt(wx * wx + wy * wy)
+    } else {
+        let cross = vx * wy - vy * wx;
+        if cross == 0.0 { 0.0 } else { cross / libm::sqrt(length_squared) }
+    };
 
     PointOnGeometry {
         t:               Parameter::new(t),
         projected:       [Unit::new(proj_x), Unit::new(proj_y)],
-        signed_distance: Unit::new(sign * distance),
+        signed_distance: Unit::new(signed_distance),
     }
 }
 
@@ -1408,5 +1411,49 @@ mod tests {
     fn from_three_points_rejects_coincident_points() {
         assert!(Circle::from_three_points(p(3.0, 3.0), p(3.0, 3.0), p(3.0, 3.0)).is_none());
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).is_none());
+    }
+
+    // ---- as_on_line: distance from differences only (independent of the coordinates' magnitude) ----
+
+    #[test]
+    fn as_on_line_distance_is_exact_for_integer_geometry_at_any_offset() {
+        // v = (3, 4), |v| = 5: w = (1, 0) gives cross = -4 -> -0.8, w = (7, 2) -> -4.4, w = (-1, 2) -> +2
+        for offset in [0.0, 1e6, 1e9, 1e12] {
+            let line = || Line { start: p(offset, offset), end: p(offset + 3.0, offset + 4.0) };
+            let at = |wx: f64, wy: f64| as_on_line(p(offset + wx, offset + wy), line());
+            assert_eq!(at(1.0, 0.0).signed_distance.get(), -0.8, "offset {offset}");
+            assert_eq!(at(1.0, 0.0).t.get(), 0.12, "offset {offset}");
+            assert_eq!(at(7.0, 2.0).signed_distance.get(), -4.4, "offset {offset}");
+            assert_eq!(at(-1.0, 2.0).signed_distance.get(), 2.0, "offset {offset}");
+            assert_eq!(at(3.0, 4.0).signed_distance.get(), 0.0, "offset {offset}");
+            assert_eq!(at(6.0, 8.0).signed_distance.get(), 0.0, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn as_on_line_random_integer_lines_satisfy_the_exact_distance_identity() {
+        // d² * |v|² = cross² holds exactly in the reals; cross and |v|² are integers here, so the
+        // check does not depend on how the distance is computed
+        let mut state = 21;
+        for offset in [0.0, 1e6, 1e9, 1e12] {
+            for _ in 0..300 {
+                let mut coordinate = || (lcg(&mut state) * 2000.0 - 1000.0).floor();
+                let (vx, vy, wx, wy) = (coordinate(), coordinate(), coordinate(), coordinate());
+                if vx == 0.0 && vy == 0.0 {
+                    continue;
+                }
+                let line = Line { start: p(offset, offset), end: p(offset + vx, offset + vy) };
+                let d = as_on_line(p(offset + wx, offset + wy), line).signed_distance.get();
+
+                let cross = (vx as i64 * wy as i64 - vy as i64 * wx as i64) as f64;
+                let length_squared = (vx * vx + vy * vy) as f64;
+                assert!(
+                    (d * d * length_squared - cross * cross).abs() <= 1e-15 * cross * cross,
+                    "offset {offset} v=({vx},{vy}) w=({wx},{wy}): d = {d}"
+                );
+                // sign: negative on the right-hand side
+                assert_eq!(d < 0.0, cross < 0.0, "offset {offset} v=({vx},{vy}) w=({wx},{wy})");
+            }
+        }
     }
 }
