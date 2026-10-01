@@ -247,7 +247,8 @@ impl IncrementFunction {
 /// forward is piecewise linear (`S(k) + f(k) * (x - k)` on [k, k+1], S(k) = f(0) + ... + f(k-1)), so
 /// the inverse is exact: scan the segments until S(k) <= target <= S(k+1), then solve for the
 /// fraction in closed form. The sums are accumulated in the same order as forward, so
-/// `inverse(forward(x))` returns `x` up to rounding of the final division.
+/// `inverse(forward(x))` returns `x` up to rounding of the final division, and exactly `k` for
+/// `forward(k)` (a grid line must not come back as k - epsilon: floor would then pick the cell before).
 /// Cost: one call of f per segment up to the answer, i.e. the same order as one forward call (the
 /// answer's index is the only thing it depends on). A target beyond a domain that never ends and
 /// never reaches it (f never returns OutOfIndex and its sum converges below target) is scanned up
@@ -271,7 +272,14 @@ fn forward_difference_inverse(
         let step = f(k)?.get();
         let next = accumulated + step;
         if next >= target {
-            let frac = if step == 0.0 { 0.0 } else { ((target - accumulated) / step).min(1.0) };
+            // next == target is exactly forward(k + 1): return the integer, not 1 - epsilon
+            let frac = if next == target {
+                1.0
+            } else if step == 0.0 {
+                0.0
+            } else {
+                ((target - accumulated) / step).min(1.0)
+            };
             return Ok(Unit::new(k as f64 + frac));
         }
         accumulated = next;
@@ -312,10 +320,16 @@ impl Accumulator {
         }
     }
 
-    /// px coordinate -> unit coordinate.
+    /// px coordinate -> unit coordinate. For every variant, `inverse(forward(k))` is exactly the integer `k`.
     pub fn inverse(&self, target: Px) -> Result<Unit, RectgridError> {
         match self {
-            Self::Scale(s) => Ok(Unit::new(target.get() / s)),
+            Self::Scale(s) => {
+                // forward is s * x, so the quotient can miss an integer by an ulp (0.3 / 0.1 =
+                // 2.9999999999999996): when s * round(quotient) is exactly the target, it is that integer.
+                let quotient = target.get() / s;
+                let nearest = libm::round(quotient);
+                Ok(Unit::new(if s * nearest == target.get() { nearest } else { quotient }))
+            }
             Self::VectorList(pxs) => vector_list_inverse(pxs, target),
             Self::ForwardDifference { inverse, .. } => inverse(target),
         }
@@ -1361,5 +1375,100 @@ mod tests {
         // an error is not clipped away as if it were a domain end
         let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
+    }
+
+    // ---- grid lines: inverse(forward(k)) is exactly k (floor must not pick the cell before) ----
+    //
+    // Before the fix, Scale(0.1) returned 42.99999999999999 for k = 43 (6546 of 100000 k below k),
+    // Scale(1/3) 11487, Scale(1.1) 2384, ForwardDifference (wavy) 11 of 3000. Scales that are
+    // exact in binary (1.5, 64, 200) and VectorList were already exact.
+
+    fn assert_grid_lines_exact(name: &str, acc: &Accumulator, count: u32) {
+        for k in 0..count {
+            let px = acc.forward(k as f64).unwrap();
+            let back = acc.inverse(px).unwrap().get();
+            assert_eq!(back, k as f64, "{name}: k = {k}: {back:?}");
+        }
+    }
+
+    #[test]
+    fn scale_inverse_returns_grid_lines_exactly() {
+        for scale in [0.1, 1.0 / 3.0, 1.1, 0.7, 1.5, 64.0, 200.0, 3.0e-7, 4.0e6] {
+            assert_grid_lines_exact(
+                &alloc::format!("Scale({scale})"),
+                &IncrementFunction::Scale(scale).accumulate().unwrap(),
+                100_000,
+            );
+        }
+    }
+
+    #[test]
+    fn forward_difference_inverse_returns_grid_lines_exactly() {
+        for (name, steps) in [
+            ("wavy", Rc::new(wavy) as Steps),
+            ("growing", Rc::new(growing)),
+            ("irregular", Rc::new(irregular)),
+            ("constant 0.1", Rc::new(|_| Ok(Px::new(0.1)))),
+            ("constant 1/3", Rc::new(|_| Ok(Px::new(1.0 / 3.0)))),
+        ] {
+            assert_grid_lines_exact(name, &accumulator(steps), 3000);
+        }
+    }
+
+    #[test]
+    fn vector_list_inverse_returns_grid_lines_exactly() {
+        let tenths: alloc::vec::Vec<Px> = (0..2000).map(|k| Px::new(k as f64 * 0.1)).collect();
+        assert_grid_lines_exact(
+            "k * 0.1",
+            &IncrementFunction::VectorList(tenths).accumulate().unwrap(),
+            2000,
+        );
+        let mut position = 0.0;
+        let irregular_positions: alloc::vec::Vec<Px> = (0..2000)
+            .map(|k| {
+                if k > 0 {
+                    position += 0.1 + (k % 7) as f64 * 0.013;
+                }
+                Px::new(position)
+            })
+            .collect();
+        assert_grid_lines_exact(
+            "irregular positions",
+            &IncrementFunction::VectorList(irregular_positions).accumulate().unwrap(),
+            2000,
+        );
+    }
+
+    #[test]
+    fn scale_inverse_off_the_grid_line_is_still_the_plain_quotient() {
+        // 0.3 is not forward(3) = 0.30000000000000004, so it is not snapped to 3
+        let acc = IncrementFunction::Scale(0.1).accumulate().unwrap();
+        assert_eq!(acc.inverse(Px::new(0.3)).unwrap().get(), 0.3 / 0.1);
+        assert_eq!(acc.inverse(Px::new(0.25)).unwrap().get(), 2.5);
+    }
+
+    #[test]
+    fn drag_without_movement_keeps_the_box_on_a_fractional_scale() {
+        let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(0.1)]).unwrap();
+        for k in 0..1000 {
+            let bx = BBox::new([Unit::new(k as f64)], [Unit::new(2.0)]);
+            let base_px = grid.unit_to_px(0, &Unit::new(k as f64)).unwrap();
+            let snapped = snap_region_to_unit(&grid, [base_px], [Px::new(0.0)], &bx, None).unwrap();
+            assert_eq!(snapped.base()[0].get(), k as f64, "k = {k}");
+            let point =
+                snap_point_to_unit(&grid, [base_px], [Px::new(0.0)], [Unit::new(0.0)]).unwrap();
+            assert_eq!(point.base()[0].get(), k as f64, "k = {k}");
+        }
+    }
+
+    #[test]
+    fn drag_resize_to_a_grid_line_lands_on_that_line_on_a_fractional_scale() {
+        let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(0.1)]).unwrap();
+        let bx = BBox::new([Unit::new(2.0)], [Unit::new(3.0)]);
+        for k in 3..1000 {
+            let pointer = grid.unit_to_px(0, &Unit::new(k as f64)).unwrap();
+            let resized = drag_resize(&grid, [pointer], &bx, [Some(false)]).unwrap();
+            assert_eq!(resized.offset()[0].get(), (k - 2) as f64, "k = {k}");
+        }
     }
 }
