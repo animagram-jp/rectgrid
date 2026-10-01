@@ -96,10 +96,10 @@ cargo +nightly fmt
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | Converts a unit coordinate to px (evaluates the accumulator directly) |
 |               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<Result<[Px; D], RectgridError>>` | Converts multiple unit coordinate points to px. A point with an unevaluable axis returns Err; other points are unaffected |
 |               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | Converts multiple BBox to (base_px, offset_px). offset_px is the actual side length accounting for base position (unit_to_px(base+offset) − unit_to_px(base)), correct even under a nonlinear accumulator. A box with an unevaluable axis returns Err; other boxes are unaffected |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boxes point hits |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boxes point hits. A box with an unevaluable axis (e.g. outside a finite domain; `box_as_px` returns Err for it) never hits; an `extend` past the end of a finite domain is clipped at the end |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | Like hit_test, returns the highest-index hit along with the get_parameter-equivalent value |
 |               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Scans every box point hits and returns hit/no-hit for each, in a Vec the same length as boxes |
-|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | Signed local coordinate for a single box, with each side length normalized to 1 |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | Signed local coordinate for a single box, with each side length normalized to 1. NaN on every axis for a box with an unevaluable axis |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointer's local coordinate (after origin correction) with z subtracted |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | For a BBox with area, determines whether point is near an edge (within threshold) |
 | - | `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | Updates BBox's base/offset via a corner-handle drag |
@@ -171,10 +171,10 @@ cargo +nightly fmt
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
 |               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<Result<[Px; D], RectgridError>>` | 複数のunit座標点をpxへ変換。評価不能な軸がある点はError |
 |               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<Result<([Px; D], [Px; D]), RectgridError>>` | 複数のBBoxを(base_px, offset_px)へ変換。offset_pxはbase位置を踏まえた実際の辺の長さ(unit_to_px(base+offset) − unit_to_px(base))で、非線形なaccumulatorでも正しい長さになる。評価不能な軸があるboxはError |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す。評価不能な軸を持つbox(有限の定義域の外にある等。`box_as_px`がErrを返すもの)は常にhitしない。定義域の終端を越える`extend`は終端で切り詰める |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
 |               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す |
-|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標 |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Parameter; D]` | 単一boxの各辺長を1とした符号付き局所座標。評価不能な軸を持つboxは全軸NaN |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
 | - | `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | 角ハンドルドラッグによってBBoxのbase/offsetを更新する |

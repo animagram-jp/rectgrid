@@ -439,34 +439,47 @@ impl<const D: usize> RectGrid<D> {
             .collect()
     }
 
+    /// unit_to_px for an edge added by `extend`: past the end of a finite domain (OutOfIndex) the
+    /// extension is clipped at the last valid unit instead of failing.
+    fn unit_to_px_clipped(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
+        match self.unit_to_px(d, unit) {
+            Err(RectgridError::OutOfIndex(last)) => self.accumulator[d].forward(last as f64),
+            other => other,
+        }
+    }
+
     /// Determines per axis whether point is contained in boxes[i] (extend included).
     /// point may be passed as-is in viewport coordinates (origin is subtracted internally).
     /// extend is added to base/offset in unit space before conversion to px
     /// (if converted to px individually and added afterward, the width would drift depending on boundary position for a nonlinear accumulator).
-    /// Returns: (whether it hit, base_px without extend, offset_px without extend).
+    /// Returns None when the box is not evaluable (box_as_px would return Err for it, e.g. it lies,
+    /// even partly, outside a finite domain): such a box is never hit. An extend edge past the end of a
+    /// finite domain is clipped at the end (see unit_to_px_clipped).
+    /// Otherwise: (whether it hit, base_px without extend, offset_px without extend).
     /// base_px/offset_px are returned alongside the hit test so they can be reused directly for parameter calculation.
     fn contains(
         &self,
         point: [Px; D],
         bx: &BBox<D>,
         extend: Option<([Unit; D], [Unit; D])>,
-    ) -> (bool, [Px; D], [Px; D]) {
-        let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
-        let base_px: [Px; D] = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
-        let offset_px: [Px; D] =
-            from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(0.0)));
-        let (lo, hi): ([Px; D], [Px; D]) = if let Some((eb, eo)) = extend {
-            (
-                from_fn(|d| self.unit_to_px(d, &(bx.base[d] + eb[d])).unwrap_or(Px::new(0.0))),
-                from_fn(|d| {
-                    self.unit_to_px(d, &(bx.base[d] + bx.offset[d] + eo[d])).unwrap_or(Px::new(0.0))
-                }),
-            )
-        } else {
-            (base_px, offset_px)
-        };
-        let hit = (0..D).all(|d| local[d].get() >= lo[d].get() && local[d].get() <= hi[d].get());
-        (hit, base_px, offset_px)
+    ) -> Option<(bool, [Px; D], [Px; D])> {
+        let mut base_px = [Px::new(0.0); D];
+        let mut offset_px = [Px::new(0.0); D];
+        let mut hit = true;
+        for d in 0..D {
+            base_px[d] = self.unit_to_px(d, &bx.base[d]).ok()?;
+            offset_px[d] = self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).ok()?;
+            let (lo, hi) = match extend {
+                Some((eb, eo)) => (
+                    self.unit_to_px_clipped(d, &(bx.base[d] + eb[d])).ok()?,
+                    self.unit_to_px_clipped(d, &(bx.base[d] + bx.offset[d] + eo[d])).ok()?,
+                ),
+                None => (base_px[d], offset_px[d]),
+            };
+            let local = point[d] - self.origin[d];
+            hit &= local.get() >= lo.get() && local.get() <= hi.get();
+        }
+        Some((hit, base_px, offset_px))
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
@@ -485,6 +498,8 @@ impl<const D: usize> RectGrid<D> {
 
     /// Returns the highest index among the boxes that point hits (a higher index in boxes is treated as higher priority).
     /// When multiple boxes hit, the higher index wins, so the scan runs from the tail.
+    /// A box that is not evaluable (box_as_px returns Err for it) is never hit. An extend that reaches
+    /// past the end of a finite domain is clipped at the end.
     ///
     /// ```
     /// extern crate alloc;
@@ -506,11 +521,9 @@ impl<const D: usize> RectGrid<D> {
         boxes: &Vec<BBox<D>>,
         extend: Option<([Unit; D], [Unit; D])>,
     ) -> Option<usize> {
-        boxes
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, bx)| self.contains(point, bx, extend).0.then_some(i))
+        boxes.iter().enumerate().rev().find_map(|(i, bx)| {
+            matches!(self.contains(point, bx, extend), Some((true, _, _))).then_some(i)
+        })
     }
 
     /// Like hit_test, returns the highest-index hit, and additionally the get_parameter-equivalent value for the hit box.
@@ -537,12 +550,13 @@ impl<const D: usize> RectGrid<D> {
     ) -> Option<(usize, [Parameter; D])> {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
         boxes.iter().enumerate().rev().find_map(|(i, bx)| {
-            let (hit, base_px, offset_px) = self.contains(point, bx, extend);
+            let (hit, base_px, offset_px) = self.contains(point, bx, extend)?;
             hit.then(|| (i, Self::parameter_from_px(local, base_px, offset_px)))
         })
     }
 
     /// Scans all boxes point hits, returning hit/no-hit for each, in a Vec the same length as boxes.
+    /// A box that is not evaluable is reported as no-hit (see hit_test).
     ///
     /// ```
     /// extern crate alloc;
@@ -563,12 +577,18 @@ impl<const D: usize> RectGrid<D> {
         boxes: &Vec<BBox<D>>,
         extend: Option<([Unit; D], [Unit; D])>,
     ) -> Vec<bool> {
-        boxes.iter().map(|bx| self.contains(point, bx, extend).0).collect()
+        boxes
+            .iter()
+            .map(|bx| matches!(self.contains(point, bx, extend), Some((true, _, _))))
+            .collect()
     }
 
     /// `ξ_d = (point_d − base_d) / offset_d`
     /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
     /// point may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
+    /// For a box that is not evaluable (box_as_px returns Err for it, e.g. it lies, even partly,
+    /// outside a finite domain) the parameter is undefined: every axis is NaN, which compares false
+    /// everywhere (corner_test reports no parameter for it).
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
@@ -586,9 +606,20 @@ impl<const D: usize> RectGrid<D> {
     /// ```
     pub fn get_parameter(&self, point: [Px; D], bx: BBox<D>) -> [Parameter; D] {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
-        let base_px = from_fn(|d| self.unit_to_px(d, &bx.base[d]).unwrap_or(Px::new(0.0)));
-        let offset_px =
-            from_fn(|d| self.unit_to_px(d, &(bx.base[d] + bx.offset[d])).unwrap_or(Px::new(1.0)));
+        let mut base_px = [Px::new(0.0); D];
+        let mut offset_px = [Px::new(0.0); D];
+        for d in 0..D {
+            match (
+                self.unit_to_px(d, &bx.base[d]),
+                self.unit_to_px(d, &(bx.base[d] + bx.offset[d])),
+            ) {
+                (Ok(base), Ok(far)) => {
+                    base_px[d] = base;
+                    offset_px[d] = far;
+                }
+                _ => return [Parameter::new(f64::NAN); D],
+            }
+        }
         Self::parameter_from_px(local, base_px, offset_px)
     }
 
@@ -1188,5 +1219,147 @@ mod tests {
         }));
         acc.inverse(Px::new(2000.5)).unwrap(); // segment 1000
         assert_eq!(calls.get(), 1001);
+    }
+
+    // ---- boxes outside a finite domain: not evaluable, never hit (previously evaluation errors were
+    // ---- replaced by 0.0 px, so a box beyond the domain "hit" at the origin) ----
+
+    fn vector_list_grid(pxs: &[f64]) -> RectGrid<1> {
+        RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::VectorList(pxs.iter().map(|&v| Px::new(v)).collect())],
+        )
+        .unwrap()
+    }
+
+    fn unit_box(base: f64, offset: f64) -> BBox<1> {
+        BBox::new([Unit::new(base)], [Unit::new(offset)])
+    }
+
+    #[test]
+    fn hit_test_box_beyond_finite_domain_never_hits() {
+        // VectorList [0, 10]: the domain is units 0..=1, this box is at units 5..6
+        let grid = vector_list_grid(&[0.0, 10.0]);
+        let boxes = alloc::vec![unit_box(5.0, 1.0)];
+        for px in [-1.0, 0.0, 5.0, 10.0, 50.0] {
+            assert_eq!(grid.hit_test([Px::new(px)], &boxes, None), None, "px {px}");
+            assert_eq!(grid.hit_tests([Px::new(px)], &boxes, None), alloc::vec![false], "px {px}");
+            assert!(grid.hit_test_with_parameter([Px::new(px)], &boxes, None).is_none(), "px {px}");
+        }
+        // an in-domain box in the same list is still found
+        let boxes = alloc::vec![unit_box(0.0, 1.0), unit_box(5.0, 1.0)];
+        assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), Some(0));
+        assert_eq!(grid.hit_tests([Px::new(5.0)], &boxes, None), alloc::vec![true, false]);
+    }
+
+    #[test]
+    fn hit_test_box_straddling_the_domain_end_is_not_evaluable() {
+        // base inside the domain, base + offset beyond it: box_as_px reports Err for such a box
+        let grid = vector_list_grid(&[0.0, 10.0]);
+        let boxes = alloc::vec![unit_box(0.5, 1.0)];
+        assert!(matches!(grid.box_as_px(&boxes)[0], Err(RectgridError::OutOfIndex(1))));
+        assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, None), None);
+    }
+
+    #[test]
+    fn get_parameter_of_unevaluable_box_is_nan() {
+        let grid = vector_list_grid(&[0.0, 10.0]);
+        for bx in [unit_box(5.0, 1.0), unit_box(0.5, 1.0)] {
+            let parameter = grid.get_parameter([Px::new(5.0)], bx);
+            assert!(parameter[0].get().is_nan());
+        }
+        // an evaluable box is unaffected
+        let parameter = grid.get_parameter([Px::new(5.0)], unit_box(0.0, 1.0));
+        assert_eq!(parameter[0].get(), 0.5);
+    }
+
+    #[test]
+    fn corner_test_reports_nothing_for_an_unevaluable_box() {
+        let grid = vector_list_grid(&[0.0, 10.0]);
+        let bx = unit_box(5.0, 1.0);
+        for px in [0.0, 5.0, 10.0] {
+            assert_eq!(corner_test(&grid, [Px::new(px)], &bx, 0.1, None).0.is_none(), true);
+            assert!(corner_test(&grid, [Px::new(px)], &bx, 0.1, None).1.is_none());
+        }
+    }
+
+    #[test]
+    fn hit_test_extend_is_clipped_at_the_domain_end() {
+        // VectorList [0, 10, 30]: domain units 0..=2. The box is the last cell (px 10..30); extending
+        // its far side by 5 units reaches past the domain. It used to make the whole box unhittable.
+        let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
+        let boxes = alloc::vec![unit_box(1.0, 1.0)];
+        let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
+        assert_eq!(grid.hit_test([Px::new(20.0)], &boxes, extend), Some(0));
+        assert_eq!(grid.hit_test([Px::new(30.0)], &boxes, extend), Some(0));
+        // the clip is the end of the grid: nothing beyond it, nothing before the box's own base
+        assert_eq!(grid.hit_test([Px::new(30.5)], &boxes, extend), None);
+        assert_eq!(grid.hit_test([Px::new(9.0)], &boxes, extend), None);
+        // extending the base side inward-out still works
+        let extend = Some(([Unit::new(-0.5)], [Unit::new(0.0)]));
+        assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, extend), Some(0));
+        assert_eq!(grid.hit_test([Px::new(4.0)], &boxes, extend), None);
+        // the parameter is still relative to the box itself
+        let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
+        let (_, parameter) = grid.hit_test_with_parameter([Px::new(20.0)], &boxes, extend).unwrap();
+        assert_eq!(parameter[0].get(), 0.5);
+    }
+
+    #[test]
+    fn hit_test_extend_is_clipped_for_forward_difference_domains() {
+        // three steps of 10 (domain units 0..=3); the closure reports OutOfIndex(3) past the end
+        let grid = RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::ForwardDifference(Rc::new(|k| {
+                if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
+            }))],
+        )
+        .unwrap();
+        let boxes = alloc::vec![unit_box(2.0, 1.0)];
+        let extend = Some(([Unit::new(0.0)], [Unit::new(2.0)]));
+        assert_eq!(grid.hit_test([Px::new(25.0)], &boxes, extend), Some(0));
+        assert_eq!(grid.hit_test([Px::new(30.0)], &boxes, extend), Some(0));
+        assert_eq!(grid.hit_test([Px::new(31.0)], &boxes, extend), None);
+        // a box that starts beyond the domain end is not evaluable
+        assert_eq!(grid.hit_test([Px::new(0.0)], &alloc::vec![unit_box(4.0, 1.0)], None), None);
+    }
+
+    #[test]
+    fn hit_test_one_unevaluable_axis_is_enough_to_miss() {
+        let grid = RectGrid::<2>::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [
+                IncrementFunction::Scale(100.0),
+                IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0)]),
+            ],
+        )
+        .unwrap();
+        let beyond = alloc::vec![BBox::new(
+            [Unit::new(0.0), Unit::new(5.0)],
+            [Unit::new(1.0), Unit::new(1.0)]
+        )];
+        assert_eq!(grid.hit_test([Px::new(50.0), Px::new(0.0)], &beyond, None), None);
+        let inside = alloc::vec![BBox::new(
+            [Unit::new(0.0), Unit::new(0.0)],
+            [Unit::new(1.0), Unit::new(1.0)]
+        )];
+        assert_eq!(grid.hit_test([Px::new(50.0), Px::new(5.0)], &inside, None), Some(0));
+    }
+
+    #[test]
+    fn hit_test_other_evaluation_errors_also_mean_not_evaluable() {
+        let grid = RectGrid::<1>::new(
+            [Px::new(0.0)],
+            [IncrementFunction::ForwardDifference(Rc::new(|_| {
+                Err(RectgridError::InvalidDefinition)
+            }))],
+        )
+        .unwrap();
+        let boxes = alloc::vec![unit_box(1.0, 1.0)];
+        assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), None);
+        assert!(grid.get_parameter([Px::new(0.0)], boxes[0])[0].get().is_nan());
+        // an error is not clipped away as if it were a domain end
+        let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
+        assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
     }
 }
