@@ -86,7 +86,7 @@ cargo +nightly fmt
 |                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | Builds a forward/inverse `Accumulator` from the definition |
 | `Accumulator` | `Scale` | `f64` | - | Inverse resolves analytically (`target / s`), no search needed |
 |               | `VectorList` | `Vec<Px>` | - | Inverse resolves via `partition_point` + O(1) linear-interpolation solve |
-|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | The only variant still boxing closures; inverse falls back to binary search |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | The only variant still boxing closures; inverse scans the segments and solves the last one exactly (the cost of one `forward` call) |
 |               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit coordinate -> px |
 |               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit coordinate |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | Start point |
@@ -161,7 +161,7 @@ cargo +nightly fmt
 |                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | 定義から順変換・逆変換を持つ`Accumulator`を構築する |
 | `Accumulator` | `Scale` | `f64` | - | 逆変換は解析的(`target / s`)に即決、探索不要 |
 |               | `VectorList` | `Vec<Px>` | - | 逆変換は`partition_point`と線形補間の逆算(O(1))で解決 |
-|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | クロージャを保持し続ける唯一のバリアント。逆変換は二分探索にフォールバック |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | クロージャを保持し続ける唯一のバリアント。逆変換は区間を順に走査し、最後の区間を厳密に解く(`forward` 1回分の計算量) |
 |               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit座標 -> px |
 |               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit座標 |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | 始点 |

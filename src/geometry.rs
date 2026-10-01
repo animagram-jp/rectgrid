@@ -164,16 +164,6 @@ pub struct Ellipse<const D: usize> {
 /// assert_eq!(result.signed_distance.get(), 4.0);
 /// ```
 pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2> {
-    as_on_ellipse_with_root(point, ellipse, ellipse_root)
-}
-
-/// `as_on_ellipse` with the root finder injected, so bisection and Newton can be compared.
-/// `root(e0, e1, delta, y0, y1)` solves F(u) = 0 as documented on `ellipse_root`.
-fn as_on_ellipse_with_root(
-    point: [Unit; 2],
-    ellipse: Ellipse<2>,
-    root: impl Fn(f64, f64, f64, f64, f64) -> f64,
-) -> PointOnGeometry<2> {
     let px = point[0].get();
     let py = point[1].get();
     let cx = ellipse.center[0].get();
@@ -201,7 +191,7 @@ fn as_on_ellipse_with_root(
     let (e0, e1) = if swap { (ry, rx) } else { (rx, ry) };
     let (y0, y1) = if swap { (raw_dy.abs(), raw_dx.abs()) } else { (raw_dx.abs(), raw_dy.abs()) };
 
-    let (x0, x1) = ellipse_closest_in_first_quadrant(e0, e1, y0, y1, root);
+    let (x0, x1) = ellipse_closest_in_first_quadrant(e0, e1, y0, y1);
 
     let (foot_x, foot_y) = if swap { (x1, x0) } else { (x0, x1) };
     let foot_x = if raw_dx < 0.0 { -foot_x } else { foot_x };
@@ -220,107 +210,150 @@ fn as_on_ellipse_with_root(
     }
 }
 
+/// Below this, `e1 * y1` is too close to the subnormal range for the root `u >= e1 * y1` to keep full
+/// precision, so such a point is treated as lying on the major axis (the error is far below one ulp
+/// of any coordinate: linear in y1, or at worst its cube root at the evolute cusp, i.e. ~1e-97).
+const MIN_RESOLVABLE_PRODUCT: f64 = 1e-290;
+
 /// Closest point on the ellipse (x0/e0)² + (x1/e1)² = 1 to (y0, y1), where e0 >= e1 > 0 and
-/// y0, y1 >= 0 (Eberly, Listing 1; the circle is handled separately).
-fn ellipse_closest_in_first_quadrant(
-    e0: f64,
-    e1: f64,
-    y0: f64,
-    y1: f64,
-    root: impl Fn(f64, f64, f64, f64, f64) -> f64,
-) -> (f64, f64) {
+/// y0, y1 >= 0 (Eberly, Listing 1; the circle is handled separately). Inputs must be finite and
+/// below ~1e150 in magnitude (squared distances are formed).
+fn ellipse_closest_in_first_quadrant(e0: f64, e1: f64, y0: f64, y1: f64) -> (f64, f64) {
     if e0 == e1 {
         let norm = libm::sqrt(y0 * y0 + y1 * y1);
         return if norm == 0.0 { (e0, 0.0) } else { (e0 * y0 / norm, e0 * y1 / norm) };
     }
 
-    let e0_sq = e0 * e0;
-    let e1_sq = e1 * e1;
+    // e0² - e1² as a product of exact differences: no cancellation for nearly circular ellipses.
+    let delta = (e0 - e1) * (e0 + e1);
+    let n0 = e0 * y0;
+    let n1 = e1 * y1;
 
-    if y1 > 0.0 {
+    if n1 >= MIN_RESOLVABLE_PRODUCT {
         if y0 > 0.0 {
-            let delta = e0_sq - e1_sq;
-            let u = root(e0, e1, delta, y0, y1);
-            (e0_sq * y0 / (u + delta), e1_sq * y1 / u)
+            let u = ellipse_root(e0, e1, delta, y0, y1);
+            (e0 * (n0 / (u + delta)), e1 * (n1 / u))
         } else {
             (0.0, e1)
         }
+    } else if n0 < delta {
+        // on the major axis, inside the evolute: x0 = e0² y0 / delta
+        let ratio = n0 / delta;
+        (e0 * ratio, e1 * libm::sqrt((1.0 - ratio) * (1.0 + ratio)))
     } else {
-        let denominator = e0_sq - e1_sq;
-        if y0 < denominator / e0 {
-            let x0 = e0_sq * y0 / denominator;
-            let ratio = x0 / e0;
-            (x0, e1 * libm::sqrt((1.0 - ratio * ratio).max(0.0)))
-        } else {
-            (e0, 0.0)
-        }
+        (e0, 0.0)
     }
 }
 
-/// The unique root of F(u) = (e0*y0/(u + delta))² + (e1*y1/u)² - 1 on (0, inf), delta = e0² - e1²,
-/// found by bisection. This is Eberly's F(t) with u = t + e1²: the shift keeps the root a
-/// floating-point number with *relative* precision. Searching t directly stores the root as
-/// -e1² + u, which loses u's digits when u is tiny (a query point close to the major axis).
+/// The unique root of F(u) = (e0*y0/(u + delta))² + (e1*y1/u)² - 1 on (0, inf), delta = e0² - e1².
 ///
-/// F is strictly decreasing, so [u0, u1] below always brackets the root and the iteration is
-/// guaranteed to converge (Eberly §2.8.1); it stops once the midpoint rounds to an endpoint.
-/// Requires e0 > e1 > 0 and y0, y1 > 0.
+/// This is Eberly's F(t) with u = t + e1²: the shift keeps the root a floating-point number with
+/// *relative* precision (searching t directly stores it as -e1² + u and loses u's digits when u is
+/// tiny, i.e. for a query point close to the major axis). F is strictly decreasing and convex.
+///
+/// F is evaluated as `(c - u)(n0 + delta + u)/(u + delta)² + (n1/u)²` with `c = n0 - delta`:
+/// the first term is `(n0/(u + delta))² - 1` without the cancellation that hides the sign change
+/// whenever u is far below delta * eps (query points at the evolute cusp).
+///
+/// The iteration count has a data-independent bound:
+/// 1. `lo = max(e1*y1, c)` has F(lo) >= 0 and `hi = hypot(e0*y0, e1*y1)` has F(hi) <= 0 (each term
+///    of F is at most 1 at the root), so the root lies in [lo, hi].
+/// 2. At most `MAX_BRACKET_STEPS` geometric bisections (mid = sqrt(lo * hi)) shrink hi / lo below 1.5.
+///    Each halves ln(hi / lo), which is below 710 for any finite doubles, so 11 steps always suffice;
+///    Newton's method alone would crawl by a factor of only ~1.5 per step from far away, e.g. up to
+///    ~540 steps at the evolute cusp with a tiny y1.
+/// 3. Newton from `lo` (left of the root) converges monotonically for convex decreasing F, with error
+///    e -> ~1.5 e² from e = 0.5: 7 steps reach double precision, at most `MAX_NEWTON_STEPS` are taken.
+///
+/// Worst case: 11 bracketing evaluations + 8 for Newton (at most 7 steps and the convergence check),
+/// 19 in total, typically a handful. Requires e0 > e1 > 0, y0 > 0 and
+/// e1 * y1 >= MIN_RESOLVABLE_PRODUCT.
 fn ellipse_root(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> f64 {
-    // Eberly's bound for double precision is 1074 iterations (digits - min_exponent).
-    const MAX_ITERATIONS: usize = 1074;
-
-    let n0 = e0 * y0;
-    let n1 = e1 * y1;
-
-    let mut u0 = n1;
-    let mut u1 = libm::sqrt(n0 * n0 + n1 * n1);
-
-    for _ in 0..MAX_ITERATIONS {
-        let u = 0.5 * (u0 + u1);
-        if u == u0 || u == u1 {
-            break;
-        }
-        let r0 = n0 / (u + delta);
-        let r1 = n1 / u;
-        let f = r0 * r0 + r1 * r1 - 1.0;
-        if f > 0.0 {
-            u0 = u;
-        } else if f < 0.0 {
-            u1 = u;
-        } else {
-            return u;
-        }
-    }
-    0.5 * (u0 + u1)
+    ellipse_root_counted(e0, e1, delta, y0, y1).0
 }
 
-/// Same root as `ellipse_root`, by Newton's method started at the left bracket end u = e1*y1.
-/// F is convex and strictly decreasing with F(u0) > 0, so every tangent step stays left of the root
-/// and the iterates increase monotonically toward it (Eberly §2.8.2, "initial guess to the left");
-/// it stops when F reaches 0 (or rounds negative) or a step no longer moves u.
-#[cfg_attr(not(test), allow(dead_code))]
-fn ellipse_root_newton(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> f64 {
-    const MAX_ITERATIONS: usize = 1074;
+const MAX_BRACKET_STEPS: usize = 12;
+const MAX_NEWTON_STEPS: usize = 16;
 
+/// F(u) of `ellipse_root` (see there), with c = n0 - delta passed in.
+#[inline]
+fn ellipse_root_function(n0: f64, n1: f64, c: f64, delta: f64, u: f64) -> f64 {
+    let s = u + delta;
+    let r1 = n1 / u;
+    // two O(1) ratios rather than a product of two ~n0-sized factors, which overflows for large inputs
+    ((c - u) / s) * ((n0 + s) / s) + r1 * r1
+}
+
+/// `ellipse_root` and the number of F evaluations it spent (the bound above is asserted in tests).
+fn ellipse_root_counted(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> (f64, usize) {
     let n0 = e0 * y0;
     let n1 = e1 * y1;
+    let c = n0 - delta;
 
-    let mut u = n1;
-    for _ in 0..MAX_ITERATIONS {
-        let r0 = n0 / (u + delta);
-        let r1 = n1 / u;
-        let f = r0 * r0 + r1 * r1 - 1.0;
-        if f <= 0.0 {
+    let scale = n0.max(n1);
+    let mut lo = n1.max(c);
+    let mut hi = scale * libm::sqrt((n0 / scale) * (n0 / scale) + (n1 / scale) * (n1 / scale));
+
+    let mut evaluations = 0;
+    for _ in 0..MAX_BRACKET_STEPS {
+        if hi <= 1.5 * lo {
             break;
         }
-        let slope = -2.0 * (r0 * r0 / (u + delta) + r1 * r1 / u);
-        let next = u - f / slope;
+        let mid = libm::sqrt(lo) * libm::sqrt(hi);
+        if !(mid > lo && mid < hi) {
+            break;
+        }
+        evaluations += 1;
+        if ellipse_root_function(n0, n1, c, delta, mid) > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    let mut u = lo;
+    for _ in 0..MAX_NEWTON_STEPS {
+        let value = ellipse_root_function(n0, n1, c, delta, u);
+        evaluations += 1;
+        if value <= 0.0 {
+            break;
+        }
+        let s = u + delta;
+        let (r0, r1) = (n0 / s, n1 / u);
+        let slope = -2.0 * (r0 * r0 / s + r1 * r1 / u);
+        let next = u - value / slope;
         if !(next > u) {
             break;
         }
         u = next;
     }
-    u
+    (u, evaluations)
+}
+
+/// Reference root finder for tests: geometric bisection of the same F (independent of Newton).
+#[cfg(test)]
+fn ellipse_root_reference(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> f64 {
+    let n0 = e0 * y0;
+    let n1 = e1 * y1;
+    let c = n0 - delta;
+    let scale = n0.max(n1);
+    let mut lo = n1.max(c);
+    let mut hi = scale * libm::sqrt((n0 / scale) * (n0 / scale) + (n1 / scale) * (n1 / scale));
+    for _ in 0..2200 {
+        let mut mid = libm::sqrt(lo) * libm::sqrt(hi);
+        if !(mid > lo && mid < hi) {
+            mid = 0.5 * (lo + hi);
+            if !(mid > lo && mid < hi) {
+                break;
+            }
+        }
+        if ellipse_root_function(n0, n1, c, delta, mid) > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 pub struct Polygon<const D: usize> {
@@ -388,13 +421,20 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
     let projected = [Unit::new(x1 + best_t * vx), Unit::new(y1 + best_t * vy)];
     let distance = libm::sqrt(best_sq);
 
-    // Outward (right-hand) unit normal of edge `i` for a counter-clockwise polygon.
-    let outward_normal = |i: usize| -> (f64, f64) {
-        let (ax, ay) = vertex(i);
-        let (bx, by) = vertex(i + 1);
-        let (ex, ey) = (bx - ax, by - ay);
-        let length = libm::sqrt(ex * ex + ey * ey);
-        if length == 0.0 { (0.0, 0.0) } else { (ey / length, -ex / length) }
+    // Outward (right-hand) unit normal of the first non-degenerate edge at or beyond `from`, walking
+    // in `step` (1 or n - 1) so duplicated vertices do not drop a neighbour from the pseudo-normal.
+    let outward_normal = |from: usize, step: usize| -> (f64, f64) {
+        for k in 0..n {
+            let i = (from + k * step) % n;
+            let (ax, ay) = vertex(i);
+            let (bx, by) = vertex(i + 1);
+            let (ex, ey) = (bx - ax, by - ay);
+            let length = libm::sqrt(ex * ex + ey * ey);
+            if length != 0.0 {
+                return (ey / length, -ex / length);
+            }
+        }
+        (0.0, 0.0)
     };
 
     let outside = if best_t > 0.0 && best_t < 1.0 {
@@ -407,8 +447,8 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
             (best_edge + 1, best_edge, best_edge + 1)
         };
         let (qx, qy) = vertex(vertex_index);
-        let (n0x, n0y) = outward_normal(previous_edge);
-        let (n1x, n1y) = outward_normal(next_edge);
+        let (n0x, n0y) = outward_normal(previous_edge, n - 1);
+        let (n1x, n1y) = outward_normal(next_edge, 1);
         (px - qx) * (n0x + n1x) + (py - qy) * (n0y + n1y) > 0.0
     };
 
@@ -434,142 +474,6 @@ pub struct PointOnGeometry<const D: usize> {
     pub t:               Parameter,
     pub projected:       Point<D>,
     pub signed_distance: Unit,
-}
-
-/// Pre-refinement implementations, kept (test builds only) so the new ones can be compared against
-/// them in accuracy and cost. Delete once the experiment is settled.
-#[cfg(test)]
-mod legacy {
-    use alloc::vec::Vec;
-
-    use super::*;
-
-    pub fn from_three_points(a: Point<2>, b: Point<2>, c: Point<2>) -> Option<Circle<2>> {
-        const EPSILON: f64 = 1e-8;
-
-        let ax = a[0].get();
-        let ay = a[1].get();
-        let bx = b[0].get();
-        let by = b[1].get();
-        let cx = c[0].get();
-        let cy = c[1].get();
-
-        let denominator = ((bx - cx) * (cy - ay) + (cx - ax) * (cy - by)) * 2.0;
-        if denominator.abs() < EPSILON {
-            return None;
-        }
-
-        let a_sq = ax * ax + ay * ay;
-        let b_sq = bx * bx + by * by;
-        let c_sq = cx * cx + cy * cy;
-
-        let center_x = (a_sq * (by - cy) + b_sq * (cy - ay) + c_sq * (ay - by)) / denominator;
-        let center_y = (a_sq * (cx - bx) + b_sq * (ax - cx) + c_sq * (bx - ax)) / denominator;
-
-        let radius =
-            libm::sqrt((center_x - ax) * (center_x - ax) + (center_y - ay) * (center_y - ay));
-
-        Some(Circle {
-            center: [Unit::new(center_x), Unit::new(center_y)],
-            radius: Unit::new(radius),
-        })
-    }
-
-    pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2> {
-        let px = point[0].get();
-        let py = point[1].get();
-        let cx = ellipse.center[0].get();
-        let cy = ellipse.center[1].get();
-        let rx = ellipse.rx.get();
-        let ry = ellipse.ry.get();
-
-        let raw_dx = px - cx;
-        let raw_dy = py - cy;
-
-        if rx == 0.0 || ry == 0.0 {
-            let distance = libm::sqrt(raw_dx * raw_dx + raw_dy * raw_dy);
-            return PointOnGeometry {
-                t:               Parameter::new(libm::atan2(raw_dy, raw_dx)),
-                projected:       [Unit::new(cx), Unit::new(cy)],
-                signed_distance: Unit::new(distance),
-            };
-        }
-
-        let dx = raw_dx / rx;
-        let dy = raw_dy / ry;
-        let ellipse_value = dx * dx + dy * dy;
-        let t = libm::atan2(dy, dx);
-
-        let (proj_x, proj_y) = if ellipse_value == 0.0 {
-            (cx + rx, cy)
-        } else {
-            let scale = 1.0 / libm::sqrt(ellipse_value);
-            (cx + raw_dx * scale, cy + raw_dy * scale)
-        };
-
-        let approx_distance = (libm::sqrt(ellipse_value) - 1.0) * rx.min(ry);
-
-        PointOnGeometry {
-            t:               Parameter::new(t),
-            projected:       [Unit::new(proj_x), Unit::new(proj_y)],
-            signed_distance: Unit::new(approx_distance),
-        }
-    }
-
-    fn edges(polygon: &Polygon<2>) -> Vec<Line<2>> {
-        let n = polygon.vertices.len();
-        (0..n)
-            .map(|i| Line { start: polygon.vertices[i], end: polygon.vertices[(i + 1) % n] })
-            .collect()
-    }
-
-    pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<2>, usize) {
-        assert!(polygon.vertices.len() >= 3, "polygon must have at least 3 vertices");
-
-        let px = point[0].get();
-        let py = point[1].get();
-
-        let mut best: Option<(f64, PointOnGeometry<2>, usize)> = None;
-
-        for (i, edge) in edges(&polygon).into_iter().enumerate() {
-            let x1 = edge.start[0].get();
-            let y1 = edge.start[1].get();
-            let x2 = edge.end[0].get();
-            let y2 = edge.end[1].get();
-
-            let result = as_on_line(
-                [Unit::new(px), Unit::new(py)],
-                Line {
-                    start: [Unit::new(x1), Unit::new(y1)],
-                    end:   [Unit::new(x2), Unit::new(y2)],
-                },
-            );
-
-            let raw_t = result.t.get();
-            let clamped_t = raw_t.max(0.0).min(1.0);
-            let clamped_proj_x = x1 + clamped_t * (x2 - x1);
-            let clamped_proj_y = y1 + clamped_t * (y2 - y1);
-            let bounded_distance = libm::sqrt(
-                (px - clamped_proj_x) * (px - clamped_proj_x)
-                    + (py - clamped_proj_y) * (py - clamped_proj_y),
-            );
-
-            if best.as_ref().map_or(true, |(d, _, _)| bounded_distance < *d) {
-                best = Some((bounded_distance, result, i));
-            }
-        }
-
-        let (_, nearest, edge_index) = best.expect("polygon must have at least one edge");
-
-        (
-            PointOnGeometry {
-                t:               nearest.t,
-                projected:       nearest.projected,
-                signed_distance: Unit::new(-nearest.signed_distance.get()),
-            },
-            edge_index,
-        )
-    }
 }
 
 #[cfg(test)]
@@ -688,11 +592,27 @@ mod tests {
         let polygon = Polygon { vertices: vec![p(0.0, 0.0), p(1.0, 1.0)] };
         as_on_polygon(p(0.0, 0.0), polygon);
     }
-    // ---- accuracy: expected values come from an independent high-precision (Decimal, 60 digits)
-    // ---- evaluation of the same problem, cross-checked by brute-force minimisation to 1e-14.
+
+    // ---------------------------------------------------------------------------------------------
+    // Accuracy / robustness tests added with the refinement.
+    //
+    // Data audit notes (see also the commit message):
+    //  * ellipse reference values: 1600-digit geometric bisection (scripts/ref_ellipse.py) on the *exact*
+    //    binary inputs; distances cross-checked against brute-force minimisation (<= 2e-15 apart),
+    //    feet to the brute force's own sqrt(eps) limit and, independently, by the on-ellipse /
+    //    orthogonality property test below. (An earlier 80-digit table mis-evaluated roots 1e-200 away.)
+    //  * polygons: oracle = brute-force segment distance + even-odd rule; random star polygons
+    //    cover acute/obtuse convex and reflex vertices, not only the axis-aligned corners.
+    //  * triangles: oracle = equidistance of the three points from the returned center.
+    // ---------------------------------------------------------------------------------------------
 
     fn close(actual: f64, expected: f64, tolerance: f64) -> bool {
         (actual - expected).abs() <= tolerance * (1.0 + expected.abs())
+    }
+
+    fn lcg(state: &mut u64) -> f64 {
+        *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (*state >> 11) as f64 / (1u64 << 53) as f64
     }
 
     fn square() -> Polygon<2> {
@@ -712,6 +632,59 @@ mod tests {
         }
     }
 
+    /// 22-vertex star (radius 10 / 4 alternating), counter-clockwise: acute convex tips, obtuse
+    /// reflex valleys, no axis-aligned edges.
+    fn star(clockwise: bool) -> Polygon<2> {
+        let mut vertices: Vec<Point<2>> = (0..22)
+            .map(|i| {
+                let a = i as f64 * core::f64::consts::TAU / 22.0;
+                let r = if i % 2 == 0 { 10.0 } else { 4.0 };
+                p(r * libm::cos(a), r * libm::sin(a))
+            })
+            .collect();
+        if clockwise {
+            vertices.reverse();
+        }
+        Polygon { vertices }
+    }
+
+    /// Brute-force oracle: (min distance to the segments, point inside by the even-odd rule).
+    fn polygon_oracle(vertices: &[Point<2>], q: (f64, f64)) -> (f64, bool) {
+        let n = vertices.len();
+        let v = |i: usize| (vertices[i % n][0].get(), vertices[i % n][1].get());
+        let mut min_sq = f64::INFINITY;
+        let mut inside = false;
+        for i in 0..n {
+            let ((x1, y1), (x2, y2)) = (v(i), v(i + 1));
+            let (vx, vy) = (x2 - x1, y2 - y1);
+            let len_sq = vx * vx + vy * vy;
+            let t = if len_sq == 0.0 {
+                0.0
+            } else {
+                (((q.0 - x1) * vx + (q.1 - y1) * vy) / len_sq).clamp(0.0, 1.0)
+            };
+            let (dx, dy) = (q.0 - x1 - t * vx, q.1 - y1 - t * vy);
+            min_sq = min_sq.min(dx * dx + dy * dy);
+            if (y1 > q.1) != (y2 > q.1) && q.0 < x1 + (q.1 - y1) / (y2 - y1) * (x2 - x1) {
+                inside = !inside;
+            }
+        }
+        (libm::sqrt(min_sq), inside)
+    }
+
+    /// Expected signed distance: outside positive for counter-clockwise, flipped for clockwise.
+    fn expected_signed(polygon: &Polygon<2>, q: (f64, f64), clockwise: bool) -> f64 {
+        let (distance, inside) = polygon_oracle(&polygon.vertices, q);
+        let outside_positive = if distance == 0.0 {
+            0.0
+        } else if inside {
+            -distance
+        } else {
+            distance
+        };
+        if clockwise { -outside_positive } else { outside_positive }
+    }
+
     #[test]
     fn as_on_polygon_nearest_convex_vertex_gives_euclidean_distance() {
         // 3-4-5 triangles: the nearest point is the vertex, not the edge's infinite line.
@@ -724,10 +697,6 @@ mod tests {
         assert_eq!(result.signed_distance.get(), 5.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (0.0, 0.0));
         assert_eq!((edge, result.t.get()), (0, 0.0));
-
-        // legacy: distance to the infinite line of the chosen edge (3 and 4 instead of 5)
-        assert_eq!(legacy::as_on_polygon(p(13.0, 14.0), square()).0.signed_distance.get(), 3.0);
-        assert_eq!(legacy::as_on_polygon(p(-3.0, -4.0), square()).0.signed_distance.get(), 4.0);
     }
 
     #[test]
@@ -747,10 +716,6 @@ mod tests {
         assert!(close(result.signed_distance.get(), -core::f64::consts::SQRT_2, 1e-15));
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (4.0, 4.0));
         assert_eq!((edge, result.t.get()), (2, 1.0));
-
-        // legacy: distance to the infinite line y = 4 (1.0 instead of sqrt(2))
-        let legacy_distance = legacy::as_on_polygon(p(3.0, 3.0), l_shape()).0.signed_distance.get();
-        assert_eq!(legacy_distance, -1.0);
     }
 
     #[test]
@@ -775,48 +740,125 @@ mod tests {
     }
 
     #[test]
-    fn as_on_polygon_matches_brute_force_distance_and_even_odd_sign() {
+    fn as_on_polygon_l_shape_grid_matches_oracle() {
         let polygon = l_shape();
-        let vertices = polygon.vertices.clone();
-        let n = vertices.len();
-        let v = |i: usize| (vertices[i % n][0].get(), vertices[i % n][1].get());
-
         for ix in -6..=24 {
             for iy in -6..=24 {
-                let (qx, qy) = (ix as f64 * 0.5, iy as f64 * 0.5);
-
-                let mut min_sq = f64::INFINITY;
-                let mut inside = false;
-                for i in 0..n {
-                    let ((x1, y1), (x2, y2)) = (v(i), v(i + 1));
-                    let (vx, vy) = (x2 - x1, y2 - y1);
-                    let t =
-                        (((qx - x1) * vx + (qy - y1) * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
-                    let (dx, dy) = (qx - x1 - t * vx, qy - y1 - t * vy);
-                    min_sq = min_sq.min(dx * dx + dy * dy);
-                    if (y1 > qy) != (y2 > qy) && qx < x1 + (qy - y1) / (y2 - y1) * (x2 - x1) {
-                        inside = !inside;
-                    }
-                }
-                let expected = if min_sq == 0.0 {
-                    0.0
-                } else if inside {
-                    -libm::sqrt(min_sq)
-                } else {
-                    libm::sqrt(min_sq)
-                };
-
-                let actual = as_on_polygon(p(qx, qy), Polygon { vertices: vertices.clone() })
-                    .0
-                    .signed_distance
-                    .get();
-                assert!(close(actual, expected, 1e-12), "q = ({qx}, {qy}): {actual} vs {expected}");
+                let q = (ix as f64 * 0.5, iy as f64 * 0.5);
+                let expected = expected_signed(&polygon, q, false);
+                let actual =
+                    as_on_polygon(p(q.0, q.1), Polygon { vertices: polygon.vertices.clone() })
+                        .0
+                        .signed_distance
+                        .get();
+                assert!(close(actual, expected, 1e-12), "q = {q:?}: {actual} vs {expected}");
             }
         }
     }
 
+    #[test]
+    fn as_on_polygon_star_random_points_match_oracle_for_both_orientations() {
+        for clockwise in [false, true] {
+            let polygon = star(clockwise);
+            let mut state = 7;
+            for _ in 0..3000 {
+                let q =
+                    ((lcg(&mut state) * 2.0 - 1.0) * 13.0, (lcg(&mut state) * 2.0 - 1.0) * 13.0);
+                let expected = expected_signed(&polygon, q, clockwise);
+                let actual =
+                    as_on_polygon(p(q.0, q.1), Polygon { vertices: polygon.vertices.clone() })
+                        .0
+                        .signed_distance
+                        .get();
+                assert!(
+                    close(actual, expected, 1e-12),
+                    "cw={clockwise} q={q:?}: {actual} vs {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn as_on_polygon_star_points_around_every_vertex_match_oracle() {
+        // tips (acute convex) and valleys (obtuse reflex): the sign must come from the pseudo-normal
+        for clockwise in [false, true] {
+            let polygon = star(clockwise);
+            for vertex in &polygon.vertices {
+                for radius in [1e-3, 0.5, 3.0] {
+                    for k in 0..16 {
+                        let a = 0.1 + k as f64 * core::f64::consts::TAU / 16.0;
+                        let q = (
+                            vertex[0].get() + radius * libm::cos(a),
+                            vertex[1].get() + radius * libm::sin(a),
+                        );
+                        let expected = expected_signed(&polygon, q, clockwise);
+                        let actual = as_on_polygon(
+                            p(q.0, q.1),
+                            Polygon { vertices: polygon.vertices.clone() },
+                        )
+                        .0
+                        .signed_distance
+                        .get();
+                        assert!(
+                            close(actual, expected, 1e-12),
+                            "cw={clockwise} q={q:?}: {actual} vs {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn as_on_polygon_duplicate_and_collinear_vertices() {
+        // a repeated vertex gives a zero-length edge: it must not drop a neighbour from the sign
+        let repeated = || Polygon {
+            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+        };
+        assert_eq!(as_on_polygon(p(13.0, 14.0), repeated()).0.signed_distance.get(), 5.0);
+        assert_eq!(as_on_polygon(p(13.0, -4.0), repeated()).0.signed_distance.get(), 5.0);
+        assert_eq!(as_on_polygon(p(9.0, 1.0), repeated()).0.signed_distance.get(), -1.0);
+
+        // a collinear vertex in the middle of an edge changes nothing
+        let collinear = || Polygon {
+            vertices: vec![p(0.0, 0.0), p(5.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+        };
+        let (outside, _) = as_on_polygon(p(5.0, -2.0), collinear());
+        assert_eq!(outside.signed_distance.get(), 2.0);
+        assert_eq!((outside.projected[0].get(), outside.projected[1].get()), (5.0, 0.0));
+        assert_eq!(as_on_polygon(p(5.0, 2.0), collinear()).0.signed_distance.get(), -2.0);
+        assert_eq!(as_on_polygon(p(13.0, 14.0), collinear()).0.signed_distance.get(), 5.0);
+    }
+
+    #[test]
+    fn as_on_polygon_is_stable_under_translation() {
+        // both the polygon and the query move by 1e8; distances are formed from differences
+        let offset = 1e8;
+        let moved = Polygon {
+            vertices: star(false)
+                .vertices
+                .iter()
+                .map(|v| p(v[0].get() + offset, v[1].get() + offset))
+                .collect(),
+        };
+        let mut state = 11;
+        for _ in 0..200 {
+            let q = ((lcg(&mut state) * 2.0 - 1.0) * 13.0, (lcg(&mut state) * 2.0 - 1.0) * 13.0);
+            let expected = expected_signed(&moved, (q.0 + offset, q.1 + offset), false);
+            let actual = as_on_polygon(
+                p(q.0 + offset, q.1 + offset),
+                Polygon { vertices: moved.vertices.clone() },
+            )
+            .0
+            .signed_distance
+            .get();
+            // inputs are quantised to ulp(1e8) = 1.5e-8
+            assert!((actual - expected).abs() < 1e-6, "q={q:?}: {actual} vs {expected}");
+        }
+    }
+
     // (name, rx, ry, dx, dy, signed distance, closest point relative to the center)
-    const ELLIPSE_CASES: [(&str, f64, f64, f64, f64, f64, (f64, f64)); 18] = [
+    const ELLIPSE_CASES: [(&str, f64, f64, f64, f64, f64, (f64, f64)); 39] = [
         (
             "4x1 (3,2)",
             4.0,
@@ -898,9 +940,9 @@ mod tests {
             4.0,
             1.0,
             3.7,
-            1e-6,
-            -0.29552158605376616,
-            (3.946665050074008, 0.16275652493147685),
+            1e-06,
+            -0.295521586053766,
+            (3.9466650500740084, 0.16275652493147658),
         ),
         (
             "4x1 (0.001,5) near minor axis",
@@ -935,42 +977,183 @@ mod tests {
             1.0,
             3.7,
             1e-14,
-            -0.2955221367906812,
-            (3.9466666666666503, 0.16275407487647386),
+            -0.295522136790681,
+            (3.946666666666651, 0.1627540748764736),
         ),
         (
             "100x0.01 (50,1e-9) eccentric",
             100.0,
             0.01,
             50.0,
-            1e-9,
+            1e-09,
             -0.00866025302341063,
             (50.00000049999995, 0.008660254008976876),
         ),
+        ("2x1 cusp (1.5,1e-300)", 2.0, 1.0, 1.5, 1e-300, -0.5, (2.0, 8.735804647362988e-101)),
+        ("2x1 cusp (1.5,1e-100)", 2.0, 1.0, 1.5, 1e-100, -0.5, (2.0, 4.054801330382267e-34)),
+        ("2x1 cusp (1.5,1e-30)", 2.0, 1.0, 1.5, 1e-30, -0.5, (2.0, 8.735804647362989e-11)),
+        (
+            "2x1 cusp (1.5,1e-8)",
+            2.0,
+            1.0,
+            1.5,
+            1e-08,
+            -0.499999999971769,
+            (1.9999964578079061, 0.0018820703910963743),
+        ),
+        (
+            "2x1 just below cusp (1.5(1-1e-9),1e-12)",
+            2.0,
+            1.0,
+            1.4999999985,
+            1e-12,
+            -0.5000000014999998,
+            (1.9999999909803683, 9.497174164576132e-05),
+        ),
+        (
+            "2x1 just above cusp (1.5(1+1e-9),1e-12)",
+            2.0,
+            1.0,
+            1.5000000015000001,
+            1e-12,
+            -0.49999999849999976,
+            (1.9999999936403032, 7.974770708447724e-05),
+        ),
+        (
+            "2x1 beyond cusp (1.6,1e-6)",
+            2.0,
+            1.0,
+            1.6,
+            1e-06,
+            -0.3999999999949999,
+            (1.999999999975, 4.999999998999995e-06),
+        ),
+        (
+            "near-circle 1+1e-12 inside (700,800)",
+            1000.000000001,
+            1000.0,
+            700.0,
+            800.0,
+            63.01458127303132,
+            (658.5046078688479, 752.5766947071655),
+        ),
+        (
+            "near-circle 1+1e-12 outside (3000,4000)",
+            1000.000000001,
+            1000.0,
+            3000.0,
+            4000.0,
+            3999.99999999964,
+            (600.0000000008304, 799.9999999998272),
+        ),
+        (
+            "near-circle 1+1e-8 inside (0.6,0.8)",
+            1.00000001,
+            1.0,
+            0.6,
+            0.8,
+            -3.599999921356644e-09,
+            (0.6000000021599999, 0.80000000288),
+        ),
+        (
+            "near-circle 1+1e-8 outside (3,4)",
+            1.00000001,
+            1.0,
+            3.0,
+            4.0,
+            3.9999999964,
+            (0.6000000083039999, 0.799999998272),
+        ),
+        (
+            "1e6x1 (5e5,0.5)",
+            1000000.0,
+            1.0,
+            500000.0,
+            0.5,
+            -0.36602540378437765,
+            (500000.00000021135, 0.8660254037843166),
+        ),
+        (
+            "1e6x1 (2e6,3)",
+            1000000.0,
+            1.0,
+            2000000.0,
+            3.0,
+            1000000.0000045,
+            (1000000.0, 2.999999999997e-12),
+        ),
+        (
+            "1e8x1 (3e7,1)",
+            100000000.0,
+            1.0,
+            30000000.0,
+            1.0,
+            0.04606079858305435,
+            (30000000.0, 0.9539392014169457),
+        ),
+        (
+            "4x1 far (1e6,1e6)",
+            4.0,
+            1.0,
+            1000000.0,
+            1000000.0,
+            1414210.6468994874,
+            (3.880569170127413, 0.24253645548873687),
+        ),
+        (
+            "4x1 far on major side (1e9,1)",
+            4.0,
+            1.0,
+            1000000000.0,
+            1.0,
+            999999996.0,
+            (4.0, 2.500000009375e-10),
+        ),
+        (
+            "4e100x1e100 (3e100,2e100)",
+            4e+100,
+            1e+100,
+            3e+100,
+            2e+100,
+            1.2973054925552015e+100,
+            (2.7090557089436533e+100, 7.357401530873434e+99),
+        ),
+        (
+            "4e-100x1e-100 (3e-100,2e-100)",
+            4e-100,
+            1e-100,
+            3e-100,
+            2e-100,
+            1.2973054925552015e-100,
+            (2.709055708943653e-100, 7.357401530873435e-101),
+        ),
+        ("4x1 (3,1e-320) subnormal y", 4.0, 1.0, 3.0, 1e-320, -0.6324555320336759, (3.2, 0.6)),
+        ("4x1 (1e-300,5) tiny x", 4.0, 1.0, 1e-300, 5.0, 4.0, (8e-301, 1.0)),
+        (
+            "4x1 (1e-300,1e-300) tiny both",
+            4.0,
+            1.0,
+            1e-300,
+            1e-300,
+            -1.0,
+            (1.0666666666666666e-300, 1.0),
+        ),
     ];
-
-    type Root = fn(f64, f64, f64, f64, f64) -> f64;
 
     #[test]
     fn as_on_ellipse_matches_high_precision_reference() {
-        matches_high_precision_reference(ellipse_root);
-    }
-
-    #[test]
-    fn as_on_ellipse_newton_matches_high_precision_reference() {
-        matches_high_precision_reference(ellipse_root_newton);
-    }
-
-    fn matches_high_precision_reference(root: Root) {
         for (name, rx, ry, dx, dy, signed, foot) in ELLIPSE_CASES {
             let ellipse =
                 Ellipse { center: p(0.0, 0.0), rx: Unit::new(rx), ry: Unit::new(ry) };
-            let result = as_on_ellipse_with_root(p(dx, dy), ellipse, root);
+            let result = as_on_ellipse(p(dx, dy), ellipse);
+            // error floor of any double implementation: a few ulp of the largest magnitude involved
+            let magnitude = rx.max(ry).max(dx.abs()).max(dy.abs());
+            let tolerance = 1e-14 * magnitude;
             let got = result.signed_distance.get();
-            assert!(close(got, signed, 1e-12), "{name}: distance {got} vs {signed}");
+            assert!((got - signed).abs() <= tolerance, "{name}: distance {got:e} vs {signed:e}");
             let (fx, fy) = (result.projected[0].get(), result.projected[1].get());
-            assert!(close(fx, foot.0, 1e-9), "{name}: foot x {fx} vs {}", foot.0);
-            assert!(close(fy, foot.1, 1e-9), "{name}: foot y {fy} vs {}", foot.1);
+            assert!((fx - foot.0).abs() <= tolerance, "{name}: foot x {fx:e} vs {:e}", foot.0);
+            assert!((fy - foot.1).abs() <= tolerance, "{name}: foot y {fy:e} vs {:e}", foot.1);
         }
     }
 
@@ -981,6 +1164,17 @@ mod tests {
         let result = as_on_ellipse(p(1e9 + 3.0, -5e8 + 2.0), ellipse);
         assert!(close(result.signed_distance.get(), 1.2973054925552014, 1e-12));
         assert!(close(result.projected[0].get() - 1e9, 2.7090557089436533, 1e-6));
+    }
+
+    #[test]
+    fn as_on_ellipse_non_finite_inputs_terminate() {
+        // no hang and no panic: the iteration count is bounded for any input
+        let ellipse =
+            || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
+        for (x, y) in [(f64::NAN, 1.0), (1.0, f64::NAN), (f64::INFINITY, 1.0), (1.0, f64::INFINITY)]
+        {
+            let _ = as_on_ellipse(p(x, y), ellipse());
+        }
     }
 
     #[test]
@@ -996,15 +1190,8 @@ mod tests {
 
     #[test]
     fn as_on_ellipse_closest_point_is_the_foot_of_the_normal() {
-        closest_point_is_the_foot_of_the_normal(ellipse_root);
-    }
-
-    #[test]
-    fn as_on_ellipse_newton_closest_point_is_the_foot_of_the_normal() {
-        closest_point_is_the_foot_of_the_normal(ellipse_root_newton);
-    }
-
-    fn closest_point_is_the_foot_of_the_normal(root: Root) {
+        // independent of the reference table: the foot lies on the ellipse, the query-to-foot vector
+        // is normal to the ellipse there, and no sampled ellipse point is closer
         for (rx, ry) in [(4.0, 1.0), (1.0, 4.0), (3.0, 3.0), (100.0, 0.01), (7.0, 6.9)] {
             for ix in -12..=12 {
                 for iy in -12..=12 {
@@ -1014,18 +1201,26 @@ mod tests {
                         rx:     Unit::new(rx),
                         ry:     Unit::new(ry),
                     };
-                    let r = as_on_ellipse_with_root(p(1.0 + dx, -2.0 + dy), ellipse, root);
+                    let r = as_on_ellipse(p(1.0 + dx, -2.0 + dy), ellipse);
                     let (fx, fy) = (r.projected[0].get() - 1.0, r.projected[1].get() + 2.0);
                     let d = r.signed_distance.get();
                     let scale = rx.max(ry);
 
-                    // the closest point lies on the ellipse
                     let residual = (fx / rx) * (fx / rx) + (fy / ry) * (fy / ry) - 1.0;
                     assert!(residual.abs() < 1e-12, "({rx},{ry}) ({dx},{dy}): residual {residual}");
-                    // its distance to the query is the reported distance
+
                     let actual = libm::sqrt((dx - fx) * (dx - fx) + (dy - fy) * (dy - fy));
                     assert!((actual - d.abs()).abs() <= 1e-12 * scale, "({rx},{ry}) ({dx},{dy})");
-                    // no sampled ellipse point is closer
+
+                    // orthogonality: (query - foot) . tangent = 0, tangent = (-rx sin t, ry cos t)
+                    let t = r.t.get();
+                    let (tx, ty) = (-rx * libm::sin(t), ry * libm::cos(t));
+                    let dot = (dx - fx) * tx + (dy - fy) * ty;
+                    assert!(
+                        dot.abs() <= 1e-9 * (1.0 + actual) * libm::sqrt(tx * tx + ty * ty),
+                        "({rx},{ry}) ({dx},{dy}): dot {dot}"
+                    );
+
                     for k in 0..720 {
                         let a = k as f64 * core::f64::consts::PI / 360.0;
                         let (sx, sy) = (rx * libm::cos(a) - dx, ry * libm::sin(a) - dy);
@@ -1036,15 +1231,70 @@ mod tests {
         }
     }
 
+    /// The root finder's cost must not depend on the data: sweep the hard regions (nearly circular,
+    /// extreme eccentricity, query points around the evolute cusp, tiny and huge coordinates) and
+    /// check both the iteration bound and agreement with an independent geometric-bisection root.
     #[test]
-    fn as_on_ellipse_legacy_radial_approximation_error() {
-        let ellipse =
-            || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
-        // on the major axis (5, 0): approximation 0.25, exact 1.0
-        assert_eq!(legacy::as_on_ellipse(p(5.0, 0.0), ellipse()).signed_distance.get(), 0.25);
-        // (10, 10): approximation 9.3078, exact 11.4987
-        let approx = legacy::as_on_ellipse(p(10.0, 10.0), ellipse()).signed_distance.get();
-        assert!(close(approx, 9.30776406404415, 1e-12));
+    fn ellipse_root_iteration_count_is_bounded_and_agrees_with_reference() {
+        let mut worst = 0;
+        let mut cases = 0;
+        for ratio in [1.0 + 1e-12, 1.0 + 1e-8, 1.001, 1.5, 2.0, 4.0, 100.0, 1e4, 1e8] {
+            for e1 in [1e-3, 1.0, 1e3] {
+                let e0 = e1 * ratio;
+                let delta = (e0 - e1) * (e0 + e1);
+                let cusp = delta / e0;
+
+                let mut y0s: Vec<f64> =
+                    (-16..=14).map(|k| libm::pow(10.0, k as f64) * e1).collect();
+                for k in 1..=15 {
+                    let d = libm::pow(10.0, -(k as f64));
+                    y0s.push(cusp * (1.0 - d));
+                    y0s.push(cusp * (1.0 + d));
+                }
+                y0s.push(cusp);
+                let mut y1s: Vec<f64> =
+                    (-16..=14).map(|k| libm::pow(10.0, k as f64) * e1).collect();
+                y1s.extend([1e-300, 1e-200, 1e-100, 1e-50, 1e-30, 1e-20].map(|y| y * e1.max(1.0)));
+
+                for &y0 in &y0s {
+                    for &y1 in &y1s {
+                        if !(y0 > 0.0 && e1 * y1 >= MIN_RESOLVABLE_PRODUCT) {
+                            continue;
+                        }
+                        cases += 1;
+                        let (root, count) = ellipse_root_counted(e0, e1, delta, y0, y1);
+                        worst = worst.max(count);
+                        assert!(
+                            count <= 19,
+                            "e0={e0:e} e1={e1:e} y0={y0:e} y1={y1:e}: {count} evaluations"
+                        );
+
+                        let reference = ellipse_root_reference(e0, e1, delta, y0, y1);
+                        let foot = |u: f64| (e0 * (e0 * y0 / (u + delta)), e1 * (e1 * y1 / u));
+                        let (a, b) = (foot(root), foot(reference));
+                        let scale = e0 + y0 + y1;
+                        assert!(
+                            (a.0 - b.0).abs() <= 1e-13 * scale
+                                && (a.1 - b.1).abs() <= 1e-13 * scale,
+                            "e0={e0:e} e1={e1:e} y0={y0:e} y1={y1:e}: {a:?} vs {b:?}"
+                        );
+                    }
+                }
+            }
+        }
+        // the bound (11 bracketing + 8 Newton evaluations) is approached only in the extreme corners
+        assert!(cases > 10_000 && worst >= 10, "cases {cases}, worst {worst}");
+    }
+
+    #[test]
+    fn ellipse_root_exact_cusp_with_tiny_y_stays_within_bound() {
+        // (2, 1): cusp at y0 = (e0^2 - e1^2) / e0 = 1.5, where F's root sits ~1e-200 from the
+        // lower end of the bracket when y1 = 1e-300 (plain Newton needs ~540 steps here)
+        let (e0, e1, delta) = (2.0, 1.0, 3.0);
+        for y1 in [1e-300, 1e-200, 1e-100, 1e-30, 1e-8] {
+            let (_, count) = ellipse_root_counted(e0, e1, delta, 1.5, y1);
+            assert!(count <= 19, "y1 = {y1:e}: {count} evaluations");
+        }
     }
 
     #[test]
@@ -1061,13 +1311,6 @@ mod tests {
             assert_eq!(c.center[1].get() - offset, 0.5, "offset {offset}");
             assert_eq!(c.radius.get(), 0.7071067811865476, "offset {offset}");
         }
-
-        // legacy: radius 0 at 1e9 and garbage at 1e12
-        let at_1e9 = legacy::from_three_points(p(1e9, 1e9), p(1e9 + 1.0, 1e9), p(1e9, 1e9 + 1.0));
-        assert_eq!(at_1e9.unwrap().radius.get(), 0.0);
-        let at_1e12 =
-            legacy::from_three_points(p(1e12, 1e12), p(1e12 + 1.0, 1e12), p(1e12, 1e12 + 1.0));
-        assert!((at_1e12.unwrap().radius.get() - 0.7071067811865476).abs() > 1e6);
     }
 
     #[test]
@@ -1085,12 +1328,58 @@ mod tests {
             assert!(close(c.radius.get() / scale, libm::sqrt(5.0), 1e-14), "scale {scale}");
         }
 
-        // legacy rejects any circle smaller than the absolute threshold
-        let tiny = legacy::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5));
-        assert!(tiny.is_none());
+        // a circle of radius ~7e-6 (the old absolute 1e-8 threshold rejected it)
         let tiny = Circle::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5)).unwrap();
         assert!(close(tiny.center[0].get() / 5e-6, 1.0, 1e-14));
         assert!(close(tiny.radius.get() / 7.0710678118654755e-6, 1.0, 1e-14));
+    }
+
+    #[test]
+    fn from_three_points_random_triangles_are_equidistant() {
+        let mut state = 5;
+        let mut checked = 0;
+        for offset in [0.0, 1e3, 1e9] {
+            for scale in [1e-6, 1.0, 1e6] {
+                for _ in 0..200 {
+                    let pts: Vec<(f64, f64)> = (0..3)
+                        .map(|_| {
+                            (offset + scale * lcg(&mut state), -offset + scale * lcg(&mut state))
+                        })
+                        .collect();
+                    // skip thin triangles (the circle is ill-conditioned there) and ones the input
+                    // grid at this offset cannot resolve
+                    let cross = (pts[1].0 - pts[0].0) * (pts[2].1 - pts[0].1)
+                        - (pts[1].1 - pts[0].1) * (pts[2].0 - pts[0].0);
+                    let longest_sq = (0..3)
+                        .map(|i| {
+                            let (a, b) = (pts[i], pts[(i + 1) % 3]);
+                            (a.0 - b.0) * (a.0 - b.0) + (a.1 - b.1) * (a.1 - b.1)
+                        })
+                        .fold(0.0, f64::max);
+                    let ulp = f64::EPSILON * offset;
+                    if cross.abs() < 0.1 * longest_sq || scale < 1e3 * ulp {
+                        continue;
+                    }
+                    let c = Circle::from_three_points(
+                        p(pts[0].0, pts[0].1),
+                        p(pts[1].0, pts[1].1),
+                        p(pts[2].0, pts[2].1),
+                    )
+                    .unwrap();
+                    let radius = c.radius.get();
+                    for q in &pts {
+                        let (dx, dy) = (q.0 - c.center[0].get(), q.1 - c.center[1].get());
+                        let distance = libm::sqrt(dx * dx + dy * dy);
+                        assert!(
+                            (distance - radius).abs() <= 1e-12 * radius + 4.0 * ulp,
+                            "offset {offset} scale {scale}: {distance} vs {radius}"
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 1000, "checked {checked}");
     }
 
     #[test]
@@ -1106,170 +1395,18 @@ mod tests {
     }
 
     #[test]
+    fn from_three_points_collinearity_threshold_is_relative_to_the_longest_side() {
+        // apex height h over a unit base: cross / longest² = h, threshold 1e-12
+        assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 0.9e-12)).is_none());
+        assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 1.1e-12)).is_some());
+        // the same shapes at another scale decide identically
+        assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 0.9e-3)).is_none());
+        assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 1.1e-3)).is_some());
+    }
+
+    #[test]
     fn from_three_points_rejects_coincident_points() {
         assert!(Circle::from_three_points(p(3.0, 3.0), p(3.0, 3.0), p(3.0, 3.0)).is_none());
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).is_none());
-    }
-
-    // ---- cost comparison (run: cargo test --release --all-features perf -- --ignored --nocapture) ----
-
-    fn lcg(state: &mut u64) -> f64 {
-        *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        (*state >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    fn time_ns(iterations: usize, mut f: impl FnMut(usize) -> f64) -> f64 {
-        let mut sink = 0.0;
-        for i in 0..iterations.min(1000) {
-            sink += f(i);
-        }
-        let start = std::time::Instant::now();
-        for i in 0..iterations {
-            sink += f(i);
-        }
-        let elapsed = start.elapsed().as_nanos() as f64 / iterations as f64;
-        core::hint::black_box(sink);
-        elapsed
-    }
-
-    fn random_points(count: usize, half_extent: (f64, f64), seed: u64) -> Vec<(f64, f64)> {
-        let mut state = seed;
-        (0..count)
-            .map(|_| {
-                (
-                    (lcg(&mut state) * 2.0 - 1.0) * half_extent.0,
-                    (lcg(&mut state) * 2.0 - 1.0) * half_extent.1,
-                )
-            })
-            .collect()
-    }
-
-    /// Iteration count of the bisection in `ellipse_root` (a replica of its loop).
-    fn bisection_iterations(e0: f64, e1: f64, y0: f64, y1: f64) -> usize {
-        let delta = e0 * e0 - e1 * e1;
-        let (n0, n1) = (e0 * y0, e1 * y1);
-        let (mut u0, mut u1) = (n1, libm::sqrt(n0 * n0 + n1 * n1));
-        for count in 0..1074 {
-            let u = 0.5 * (u0 + u1);
-            if u == u0 || u == u1 {
-                return count;
-            }
-            let (r0, r1) = (n0 / (u + delta), n1 / u);
-            let f = r0 * r0 + r1 * r1 - 1.0;
-            if f > 0.0 {
-                u0 = u;
-            } else if f < 0.0 {
-                u1 = u;
-            } else {
-                return count;
-            }
-        }
-        1074
-    }
-
-    #[test]
-    #[ignore]
-    fn perf_polygon_new_vs_legacy() {
-        for n in [4usize, 32, 256, 4096] {
-            let vertices: Vec<Point<2>> = (0..n)
-                .map(|i| {
-                    let a = i as f64 * core::f64::consts::TAU / n as f64;
-                    p(100.0 * libm::cos(a), 100.0 * libm::sin(a))
-                })
-                .collect();
-            let points = random_points(1024, (150.0, 150.0), 1);
-            let iterations = (4_000_000 / n).max(2000);
-
-            let clone_only = time_ns(iterations, |i| {
-                core::hint::black_box(vertices.clone()).len() as f64 + i as f64
-            });
-            let legacy_ns = time_ns(iterations, |i| {
-                let (x, y) = points[i % 1024];
-                legacy::as_on_polygon(p(x, y), Polygon { vertices: vertices.clone() })
-                    .0
-                    .signed_distance
-                    .get()
-            });
-            let new_ns = time_ns(iterations, |i| {
-                let (x, y) = points[i % 1024];
-                as_on_polygon(p(x, y), Polygon { vertices: vertices.clone() })
-                    .0
-                    .signed_distance
-                    .get()
-            });
-            std::println!(
-                "polygon n={n:5}: legacy {legacy_ns:10.1} ns  new {new_ns:10.1} ns  (clone only {clone_only:9.1} ns)  net: legacy {:9.1}  new {:9.1}  ratio {:.2}",
-                legacy_ns - clone_only,
-                new_ns - clone_only,
-                (new_ns - clone_only) / (legacy_ns - clone_only)
-            );
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn perf_ellipse_new_vs_legacy() {
-        for (rx, ry) in [(4.0f64, 1.0f64), (100.0, 0.01), (5.0, 5.0)] {
-            let extent = rx.max(ry) * 1.3;
-            let points = random_points(1024, (extent, extent), 2);
-            let ellipse =
-                || Ellipse { center: p(0.0, 0.0), rx: Unit::new(rx), ry: Unit::new(ry) };
-            let iterations = 2_000_000;
-
-            let legacy_ns = time_ns(iterations, |i| {
-                let (x, y) = points[i % 1024];
-                legacy::as_on_ellipse(p(x, y), ellipse()).signed_distance.get()
-            });
-            let new_ns = time_ns(iterations, |i| {
-                let (x, y) = points[i % 1024];
-                as_on_ellipse(p(x, y), ellipse()).signed_distance.get()
-            });
-            let newton_ns = time_ns(iterations, |i| {
-                let (x, y) = points[i % 1024];
-                as_on_ellipse_with_root(p(x, y), ellipse(), ellipse_root_newton)
-                    .signed_distance
-                    .get()
-            });
-
-            let (e0, e1) = (rx.max(ry), rx.min(ry));
-            let counts: Vec<usize> = points
-                .iter()
-                .filter(|(x, y)| x.abs() > 0.0 && y.abs() > 0.0 && e0 != e1)
-                .map(|(x, y)| {
-                    let (a, b) = if ry > rx { (y.abs(), x.abs()) } else { (x.abs(), y.abs()) };
-                    bisection_iterations(e0, e1, a, b)
-                })
-                .collect();
-            let mean = counts.iter().sum::<usize>() as f64 / counts.len().max(1) as f64;
-            std::println!(
-                "ellipse {rx}x{ry}: legacy {legacy_ns:7.1} ns  bisection {new_ns:7.1} ns (x{:.1})  newton {newton_ns:7.1} ns (x{:.1})  (bisection iterations: mean {mean:.1}, max {})",
-                new_ns / legacy_ns,
-                newton_ns / legacy_ns,
-                counts.iter().max().copied().unwrap_or(0)
-            );
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn perf_circle_three_points_new_vs_legacy() {
-        let points = random_points(3072, (50.0, 50.0), 3);
-        let iterations = 5_000_000;
-        let legacy_ns = time_ns(iterations, |i| {
-            let j = (i * 3) % 3072;
-            let (a, b, c) = (points[j], points[j + 1], points[j + 2]);
-            legacy::from_three_points(p(a.0, a.1), p(b.0, b.1), p(c.0, c.1))
-                .map_or(0.0, |c| c.radius.get())
-        });
-        let new_ns = time_ns(iterations, |i| {
-            let j = (i * 3) % 3072;
-            let (a, b, c) = (points[j], points[j + 1], points[j + 2]);
-            Circle::from_three_points(p(a.0, a.1), p(b.0, b.1), p(c.0, c.1))
-                .map_or(0.0, |c| c.radius.get())
-        });
-        std::println!(
-            "circle from_three_points: legacy {legacy_ns:6.1} ns  new {new_ns:6.1} ns  ratio {:.2}",
-            new_ns / legacy_ns
-        );
     }
 }

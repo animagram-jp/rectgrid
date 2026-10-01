@@ -1,8 +1,6 @@
 #![no_std]
 extern crate alloc;
 extern crate core;
-#[cfg(test)]
-extern crate std;
 
 use core::fmt::{Display, Formatter, Result};
 

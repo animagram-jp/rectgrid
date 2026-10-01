@@ -245,16 +245,20 @@ impl IncrementFunction {
 /// Inverts px to unit for a ForwardDifference definition (the only variant without an analytical
 /// or array-based inverse).
 /// forward is piecewise linear (`S(k) + f(k) * (x - k)` on [k, k+1], S(k) = f(0) + ... + f(k-1)), so
-/// the inverse is exact: find the segment k with S(k) <= target <= S(k+1), then solve for the
+/// the inverse is exact: scan the segments until S(k) <= target <= S(k+1), then solve for the
 /// fraction in closed form. The sums are accumulated in the same order as forward, so
 /// `inverse(forward(x))` returns `x` up to rounding of the final division.
+/// Cost: one call of f per segment up to the answer, i.e. the same order as one forward call (the
+/// answer's index is the only thing it depends on). A target beyond a domain that never ends and
+/// never reaches it (f never returns OutOfIndex and its sum converges below target) is scanned up
+/// to u32::MAX segments, as forward would be.
 /// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
 fn forward_difference_inverse(
     f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
     target: Px,
 ) -> Result<Unit, RectgridError> {
     let target = target.get();
-    if target.is_nan() {
+    if !target.is_finite() {
         return Err(RectgridError::InvalidDefinition);
     }
     if target <= 0.0 {
@@ -1062,105 +1066,83 @@ mod tests {
         assert_eq!(resized.base[0].get(), 3.0);
         assert_eq!(resized.offset[0].get(), 1.0);
     }
-    // ---- ForwardDifference inverse: exact segment scan vs. the pre-refinement binary search ----
+    // ---- ForwardDifference inverse: exact segment scan ----
+    //
+    // Data audit: the first version only exercised one smooth increment around x ~ 1e4. The sets
+    // below add extreme step magnitudes, a steadily growing step, an irregular (hashed) step,
+    // sub-unit and large x, plateaus, finite domains and non-finite targets.
 
-    /// Pre-refinement inverse (unit-space range widening + bisection, absolute tolerance 1e-9),
-    /// kept for comparison only.
-    fn legacy_inverse(
-        f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
-        target: Px,
-    ) -> Result<Unit, RectgridError> {
-        let target = target.get();
-        let eval = |x: f64| -> Result<Px, RectgridError> {
-            let n = libm::floor(x) as u32;
-            let frac = x - n as f64;
-            let mut acc = Px::new(0.0);
-            for k in 0..n {
-                acc += f(k)?;
-            }
-            if frac != 0.0 {
-                acc += f(n)? * frac;
-            }
-            Ok(acc)
-        };
-
-        let mut lo = 0.0;
-        let mut hi = 1.0;
-        loop {
-            match eval(hi) {
-                Ok(px) if px.get() >= target => break,
-                Ok(_) => {
-                    lo = hi;
-                    hi *= 2.0;
-                }
-                Err(RectgridError::OutOfIndex(last)) => {
-                    hi = last as f64;
-                    if eval(hi)?.get() < target {
-                        return Err(RectgridError::OutOfIndex(last));
-                    }
-                    break;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        const EPSILON: f64 = 1e-9;
-        for _ in 0..64 {
-            if hi - lo < EPSILON {
-                break;
-            }
-            let mid = (lo + hi) / 2.0;
-            if eval(mid)?.get() < target {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        Ok(Unit::new((lo + hi) / 2.0))
-    }
+    type Steps = Rc<dyn Fn(u32) -> Result<Px, RectgridError>>;
 
     /// A non-uniform increment (1.0 ... 1.016) that has no closed form.
     fn wavy(k: u32) -> Result<Px, RectgridError> {
         Ok(Px::new(1.0 + libm::fabs(libm::sin(k as f64 * 0.37)) * 0.01 + 1e-3 * (k % 7) as f64))
     }
 
-    #[test]
-    fn forward_difference_inverse_roundtrip_is_exact() {
-        let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
-        let acc = IncrementFunction::ForwardDifference(f.clone()).accumulate().unwrap();
+    /// 1.0001^k: monotonically growing steps.
+    fn growing(k: u32) -> Result<Px, RectgridError> {
+        Ok(Px::new(libm::pow(1.0001, k as f64)))
+    }
 
-        let mut worst_new = 0.0f64;
-        let mut worst_legacy = 0.0f64;
-        for k in 0..2000 {
-            let x = 12345.0 + k as f64 * 0.0137;
-            let px = acc.forward(x).unwrap();
-            worst_new = worst_new.max((acc.inverse(px).unwrap().get() - x).abs());
-            // legacy costs ~70 forward evaluations per call, so sample it sparsely
-            if k % 100 == 0 {
-                worst_legacy = worst_legacy.max((legacy_inverse(&f, px).unwrap().get() - x).abs());
-            }
-        }
-        // one ulp of 12345 is 1.8e-12
-        assert!(worst_new <= 1e-11, "worst roundtrip error {worst_new:e}");
-        // legacy stops bisecting at |hi - lo| < 1e-9 (measured 4.7e-10)
-        assert!(worst_legacy >= 1e-10, "legacy worst roundtrip error {worst_legacy:e}");
+    /// Hashed steps in [0.5, 1.5): irregular, deterministic.
+    fn irregular(k: u32) -> Result<Px, RectgridError> {
+        let mut z = (k as u64).wrapping_add(0x9E3779B97F4A7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^= z >> 31;
+        Ok(Px::new(0.5 + (z >> 11) as f64 / (1u64 << 53) as f64))
+    }
+
+    fn accumulator(steps: Steps) -> Accumulator {
+        IncrementFunction::ForwardDifference(steps).accumulate().unwrap()
     }
 
     #[test]
-    fn forward_difference_inverse_matches_forward_across_scales() {
-        let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
-        let acc = IncrementFunction::ForwardDifference(f).accumulate().unwrap();
-        for x in [0.25, 0.999, 1.0, 3.5, 99.75, 1000.125, 50_000.5] {
-            let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
-            assert!((back - x).abs() <= 1e-11 * (1.0 + x), "x = {x}: {back}");
+    fn forward_difference_inverse_roundtrip_is_exact() {
+        let datasets: [(&str, Steps, &[f64]); 6] = [
+            (
+                "wavy",
+                Rc::new(wavy),
+                &[0.25, 0.999, 1.0, 3.5, 99.75, 1000.125, 12345.0137, 50_000.5],
+            ),
+            ("constant 1e-9", Rc::new(|_| Ok(Px::new(1e-9))), &[0.25, 3.5, 1000.125, 20_000.75]),
+            ("constant 1e9", Rc::new(|_| Ok(Px::new(1e9))), &[0.25, 3.5, 1000.125, 20_000.75]),
+            ("growing 1.0001^k", Rc::new(growing), &[0.5, 17.25, 1000.5, 4000.75]),
+            ("irregular", Rc::new(irregular), &[0.1, 1.9, 50.5, 1234.5678, 30_000.25]),
+            (
+                "first step zero",
+                Rc::new(|k| Ok(Px::new(if k == 0 { 0.0 } else { 2.0 }))),
+                &[1.5, 10.25, 999.5],
+            ),
+        ];
+        for (name, steps, xs) in datasets {
+            let acc = accumulator(steps);
+            for &x in xs {
+                let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
+                // a few ulp of x: the only rounding left is the final division
+                assert!((back - x).abs() <= 1e-14 * (1.0 + x), "{name}: x = {x}: {back}");
+            }
+        }
+    }
+
+    #[test]
+    fn forward_difference_inverse_sweeps_many_x_exactly() {
+        for steps in [Rc::new(wavy) as Steps, Rc::new(irregular)] {
+            let acc = accumulator(steps);
+            let mut worst = 0.0f64;
+            for k in 0..2000 {
+                let x = 12345.0 + k as f64 * 0.0137;
+                let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
+                worst = worst.max((back - x).abs());
+            }
+            // one ulp of 12345 is 1.8e-12; the former unit-space bisection stopped at 1e-9
+            assert!(worst <= 1e-11, "worst roundtrip error {worst:e}");
         }
     }
 
     #[test]
     fn forward_difference_inverse_constant_steps_are_exact() {
-        let acc = IncrementFunction::ForwardDifference(Rc::new(|_| Ok(Px::new(10.0))))
-            .accumulate()
-            .unwrap();
+        let acc = accumulator(Rc::new(|_| Ok(Px::new(10.0))));
         assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
         assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
         assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
@@ -1170,11 +1152,7 @@ mod tests {
     #[test]
     fn forward_difference_inverse_zero_step_returns_start_of_plateau() {
         // steps 10, 0, 10: px 10 is reached at unit 1 and held until unit 2
-        let acc = IncrementFunction::ForwardDifference(Rc::new(|k| {
-            Ok(Px::new(if k == 1 { 0.0 } else { 10.0 }))
-        }))
-        .accumulate()
-        .unwrap();
+        let acc = accumulator(Rc::new(|k| Ok(Px::new(if k == 1 { 0.0 } else { 10.0 }))));
         assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
         assert_eq!(acc.inverse(Px::new(15.0)).unwrap().get(), 2.5);
     }
@@ -1182,56 +1160,33 @@ mod tests {
     #[test]
     fn forward_difference_inverse_finite_domain_boundaries() {
         // three steps of 10 (domain 0..=3); the closure reports OutOfIndex(3) past the end
-        let acc = IncrementFunction::ForwardDifference(Rc::new(|k| {
+        let acc = accumulator(Rc::new(|k| {
             if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
-        }))
-        .accumulate()
-        .unwrap();
+        }));
         assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
         assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 3.0);
         assert!(matches!(acc.inverse(Px::new(30.5)), Err(RectgridError::OutOfIndex(3))));
     }
 
     #[test]
-    fn forward_difference_inverse_rejects_nan() {
-        let acc = IncrementFunction::ForwardDifference(Rc::new(|_| Ok(Px::new(1.0))))
-            .accumulate()
-            .unwrap();
-        assert!(matches!(acc.inverse(Px::new(f64::NAN)), Err(RectgridError::InvalidDefinition)));
+    fn forward_difference_inverse_rejects_non_finite_targets() {
+        // an unbounded closure would otherwise be scanned for u32::MAX segments
+        let acc = accumulator(Rc::new(|_| Ok(Px::new(1.0))));
+        for target in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(acc.inverse(Px::new(target)), Err(RectgridError::InvalidDefinition)));
+        }
     }
 
     #[test]
-    #[ignore]
-    fn perf_forward_difference_inverse_new_vs_legacy() {
-        fn time_ns(iterations: usize, mut f: impl FnMut() -> f64) -> f64 {
-            let mut sink = f();
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                sink += f();
-            }
-            let elapsed = start.elapsed().as_nanos() as f64 / iterations as f64;
-            core::hint::black_box(sink);
-            elapsed
-        }
-
-        for n in [10u32, 1_000, 100_000] {
-            let f: Rc<dyn Fn(u32) -> Result<Px, RectgridError>> = Rc::new(wavy);
-            let acc = IncrementFunction::ForwardDifference(f.clone()).accumulate().unwrap();
-            let target = acc.forward(n as f64 * 0.7 + 0.3).unwrap();
-
-            let fast = (30_000_000 / n as usize).max(10);
-            let slow = (400_000 / n as usize).max(3);
-            let accumulator = &acc;
-            let forward_ns =
-                time_ns(fast, || accumulator.forward(n as f64 * 0.7 + 0.3).unwrap().get());
-            let new_ns = time_ns(fast, || accumulator.inverse(target).unwrap().get());
-            let legacy_f = f.clone();
-            let legacy_ns = time_ns(slow, || legacy_inverse(&legacy_f, target).unwrap().get());
-            std::println!(
-                "forward-difference inverse, target at unit ~{:7.0}: forward {forward_ns:12.1} ns  new {new_ns:12.1} ns  legacy {legacy_ns:14.1} ns  legacy/new {:.1}",
-                n as f64 * 0.7 + 0.3,
-                legacy_ns / new_ns
-            );
-        }
+    fn forward_difference_inverse_cost_is_one_call_per_segment_up_to_the_answer() {
+        use core::cell::Cell;
+        let calls = Rc::new(Cell::new(0u32));
+        let counter = calls.clone();
+        let acc = accumulator(Rc::new(move |_| {
+            counter.set(counter.get() + 1);
+            Ok(Px::new(2.0))
+        }));
+        acc.inverse(Px::new(2000.5)).unwrap(); // segment 1000
+        assert_eq!(calls.get(), 1001);
     }
 }
