@@ -11,7 +11,7 @@ To enable the `geometry` module:
 
 ```toml
 [dependencies]
-rectgrid = { version = "0.2", features = ["geometry"] }
+rectgrid = { version = "0.3", features = ["geometry"] }
 ```
 
 [English](#rectgrid) | [日本語](#ja)
