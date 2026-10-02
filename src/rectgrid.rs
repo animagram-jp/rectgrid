@@ -1247,7 +1247,7 @@ mod tests {
         let grid = vector_list_grid(&[0.0, 10.0]);
         let bx = unit_box(5.0, 1.0);
         for px in [0.0, 5.0, 10.0] {
-            assert_eq!(corner_test(&grid, [Px::new(px)], &bx, 0.1, None).0.is_none(), true);
+            assert!(corner_test(&grid, [Px::new(px)], &bx, 0.1, None).0.is_none());
             assert!(corner_test(&grid, [Px::new(px)], &bx, 0.1, None).1.is_none());
         }
     }

@@ -308,7 +308,7 @@ fn ellipse_root_counted(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> (f64,
         let (r0, r1) = (n0 / s, n1 / u);
         let slope = -2.0 * (r0 * r0 / s + r1 * r1 / u);
         let next = u - value / slope;
-        if !(next > u) {
+        if next.is_nan() || next <= u {
             break;
         }
         u = next;
@@ -827,7 +827,9 @@ mod tests {
     }
 
     /// (name, rx, ry, dx, dy, signed distance, closest point relative to the center)
-    const ELLIPSE_CASES: [(&str, f64, f64, f64, f64, f64, (f64, f64)); 39] = [
+    type EllipseCase = (&'static str, f64, f64, f64, f64, f64, (f64, f64));
+
+    const ELLIPSE_CASES: [EllipseCase; 39] = [
         (
             "4x1 (3,2)",
             4.0,
@@ -1273,7 +1275,7 @@ mod tests {
             .unwrap();
             assert_eq!(c.center[0].get() - offset, 0.5, "offset {offset}");
             assert_eq!(c.center[1].get() - offset, 0.5, "offset {offset}");
-            assert_eq!(c.radius.get(), 0.7071067811865476, "offset {offset}");
+            assert_eq!(c.radius.get(), core::f64::consts::FRAC_1_SQRT_2, "offset {offset}");
         }
     }
 
@@ -1401,7 +1403,7 @@ mod tests {
                 let d = as_on_line(p(offset + wx, offset + wy), line).signed_distance.get();
 
                 let cross = (vx as i64 * wy as i64 - vy as i64 * wx as i64) as f64;
-                let length_squared = (vx * vx + vy * vy) as f64;
+                let length_squared = vx * vx + vy * vy;
                 assert!(
                     (d * d * length_squared - cross * cross).abs() <= 1e-15 * cross * cross,
                     "offset {offset} v=({vx},{vy}) w=({wx},{wy}): d = {d}"
