@@ -163,9 +163,6 @@ impl<const D: usize> BBox<D> {
     }
 }
 
-// todo: Option-based expression, geometry definition implementation part
-// pub type Region<const D: usize> = (Vec<BBox<D>>, Option<Box<dyn Fn(u32) -> Result<Px, RectgridError>>>);
-
 pub enum IncrementFunction {
     /// Fn(i) = points[i+1] - points[i]
     /// OutOfIndex means boundary; the argument is the difference's index (integer).
@@ -751,7 +748,7 @@ pub fn drag_resize<const D: usize>(
 }
 
 /// Computes base's px position during a move drag. BBox keeps base in Unit, so the px position is only
-/// returned; it is committed to BBox by snap_region_to_unit (or snap_point_to_unit) at drag end.
+/// returned; it is committed to BBox by snap_bbox_to_unit (or snap_point_to_unit) at drag end.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, drag_translate};
@@ -774,13 +771,13 @@ pub fn drag_translate<const D: usize>(
 /// drag_offset must be the value passed to drag_translate. extend is added before flooring.
 ///
 /// ```
-/// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, snap_region_to_unit};
+/// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, snap_bbox_to_unit};
 /// let grid = RectGrid::<2>::new(
 ///     [Px::new(0.0), Px::new(0.0)],
 ///     [IncrementFunction::Scale(200.0), IncrementFunction::Scale(64.0)],
 /// ).unwrap();
 /// let bx = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
-/// let snapped = snap_region_to_unit(
+/// let snapped = snap_bbox_to_unit(
 ///     &grid, [Px::new(430.0), Px::new(70.0)], [Px::new(0.0), Px::new(0.0)], &bx,
 ///     Some([Unit::new(0.25), Unit::new(0.25)]),
 /// ).unwrap();
@@ -788,7 +785,7 @@ pub fn drag_translate<const D: usize>(
 /// assert_eq!(snapped.base()[1].get(), 1.0);
 /// assert_eq!(snapped.offset()[0].get(), 1.0); // offset is already floored, so it stays as-is
 /// ```
-pub fn snap_region_to_unit<const D: usize>(
+pub fn snap_bbox_to_unit<const D: usize>(
     grid: &RectGrid<D>,
     pointer: [Px; D],
     drag_offset: [Px; D],
@@ -1361,7 +1358,7 @@ mod tests {
         for k in 0..1000 {
             let bx = BBox::new([Unit::new(k as f64)], [Unit::new(2.0)]);
             let base_px = grid.unit_to_px(0, &Unit::new(k as f64)).unwrap();
-            let snapped = snap_region_to_unit(&grid, [base_px], [Px::new(0.0)], &bx, None).unwrap();
+            let snapped = snap_bbox_to_unit(&grid, [base_px], [Px::new(0.0)], &bx, None).unwrap();
             assert_eq!(snapped.base()[0].get(), k as f64, "k = {k}");
             let point =
                 snap_point_to_unit(&grid, [base_px], [Px::new(0.0)], [Unit::new(0.0)]).unwrap();

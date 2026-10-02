@@ -5,7 +5,7 @@ use rectgrid::{
     BBox, IncrementFunction, Px, RectGrid, Unit as GridUnit, corner_test, drag_resize,
     drag_translate,
     geometry::{Circle, as_on_circle},
-    snap_point_to_unit, snap_region_to_unit,
+    snap_bbox_to_unit, snap_point_to_unit,
 };
 
 use crate::{
@@ -255,7 +255,7 @@ impl Handler {
                     if self.drag_corner.is_some() {
                         None
                     } else {
-                        snap_region_to_unit(
+                        snap_bbox_to_unit(
                             &self.rectgrid,
                             pointer,
                             drag_offset,
