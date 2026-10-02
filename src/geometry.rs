@@ -40,9 +40,7 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
     let proj_x = x1 + t * vx;
     let proj_y = y1 + t * vy;
 
-    // |cross| / |v| is formed from differences only. Subtracting the absolute projected point
-    // (x1 + t * vx) from the query would lose digits in proportion to the coordinates' magnitude
-    // (about 1e-11 relative at an offset of 1e6, against 1e-16 here).
+    // |cross| / |v| uses differences only, so the error does not grow with the coordinates' magnitude
     let signed_distance = if length_squared == 0.0 {
         libm::sqrt(wx * wx + wy * wy)
     } else {
@@ -77,14 +75,12 @@ impl Circle<2> {
     /// assert!((result.radius.get() - 1.0).abs() < 1e-8);
     /// ```
     pub fn from_three_points(a: Point<2>, b: Point<2>, c: Point<2>) -> Option<Self> {
-        // Collinearity threshold relative to the longest side: cross = 2 * area, so
-        // cross / longest² is scale-invariant (an absolute threshold rejects small circles).
+        // collinear when cross <= RELATIVE_EPSILON * longest_side², which is scale-invariant
         const RELATIVE_EPSILON: f64 = 1e-12;
 
         let ax = a[0].get();
         let ay = a[1].get();
-        // Solve relative to `a`: roundoff then scales with the differences between the points,
-        // not with their absolute coordinates (Shewchuk, "Lecture Notes on Geometric Robustness").
+        // solve relative to `a` so roundoff follows the point differences (Shewchuk, 1999)
         let bx = b[0].get() - ax;
         let by = b[1].get() - ay;
         let cx = c[0].get() - ax;
@@ -189,7 +185,7 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     let rx = rx.abs();
     let ry = ry.abs();
 
-    // Reduce to the first quadrant with the semi-major axis first (e0 >= e1), then undo.
+    // reduce to the first quadrant with the semi-major axis first (e0 >= e1), then undo
     let swap = ry > rx;
     let (e0, e1) = if swap { (ry, rx) } else { (rx, ry) };
     let (y0, y1) = if swap { (raw_dy.abs(), raw_dx.abs()) } else { (raw_dx.abs(), raw_dy.abs()) };
@@ -213,9 +209,8 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     }
 }
 
-/// Below this, `e1 * y1` is too close to the subnormal range for the root `u >= e1 * y1` to keep full
-/// precision, so such a point is treated as lying on the major axis (the error is far below one ulp
-/// of any coordinate: linear in y1, or at worst its cube root at the evolute cusp, i.e. ~1e-97).
+/// Below this, `e1 * y1` is near the subnormal range and the root `u >= e1 * y1` loses precision, so the
+/// point is treated as lying on the major axis (error ~1e-97 at worst, at the evolute cusp).
 const MIN_RESOLVABLE_PRODUCT: f64 = 1e-290;
 
 /// Closest point on the ellipse (x0/e0)² + (x1/e1)² = 1 to (y0, y1), where e0 >= e1 > 0 and
@@ -227,7 +222,7 @@ fn ellipse_closest_in_first_quadrant(e0: f64, e1: f64, y0: f64, y1: f64) -> (f64
         return if norm == 0.0 { (e0, 0.0) } else { (e0 * y0 / norm, e0 * y1 / norm) };
     }
 
-    // e0² - e1² as a product of exact differences: no cancellation for nearly circular ellipses.
+    // e0² - e1² as a product of differences: no cancellation for nearly circular ellipses
     let delta = (e0 - e1) * (e0 + e1);
     let n0 = e0 * y0;
     let n1 = e1 * y1;
@@ -248,29 +243,20 @@ fn ellipse_closest_in_first_quadrant(e0: f64, e1: f64, y0: f64, y1: f64) -> (f64
     }
 }
 
-/// The unique root of F(u) = (e0*y0/(u + delta))² + (e1*y1/u)² - 1 on (0, inf), delta = e0² - e1².
+/// Root of F(u) = (e0*y0/(u + delta))² + (e1*y1/u)² - 1 on (0, inf), delta = e0² - e1², by bracketed Newton.
 ///
-/// This is Eberly's F(t) with u = t + e1²: the shift keeps the root a floating-point number with
-/// *relative* precision (searching t directly stores it as -e1² + u and loses u's digits when u is
-/// tiny, i.e. for a query point close to the major axis). F is strictly decreasing and convex.
+/// F is Eberly's F(t) with u = t + e1², which keeps the root relatively precise near the major axis; F is
+/// strictly decreasing and convex. It is evaluated as `(c - u)(n0 + delta + u)/(u + delta)² + (n1/u)²` with
+/// `c = n0 - delta`, avoiding the cancellation in `(n0/(u + delta))² - 1` at the evolute cusp.
 ///
-/// F is evaluated as `(c - u)(n0 + delta + u)/(u + delta)² + (n1/u)²` with `c = n0 - delta`:
-/// the first term is `(n0/(u + delta))² - 1` without the cancellation that hides the sign change
-/// whenever u is far below delta * eps (query points at the evolute cusp).
+/// The iteration count is bounded independently of the data:
+/// 1. The root lies in [lo, hi] with lo = max(e1*y1, c) and hi = hypot(e0*y0, e1*y1).
+/// 2. At most 11 geometric bisections (mid = sqrt(lo * hi)) bring hi / lo below 1.5; Newton alone advances
+///    only ~1.5x per step when the root is far from lo.
+/// 3. Newton from `lo` converges monotonically (F is convex and decreasing); 7 steps reach double precision.
 ///
-/// The iteration count has a data-independent bound:
-/// 1. `lo = max(e1*y1, c)` has F(lo) >= 0 and `hi = hypot(e0*y0, e1*y1)` has F(hi) <= 0 (each term
-///    of F is at most 1 at the root), so the root lies in [lo, hi].
-/// 2. At most `MAX_BRACKET_STEPS` geometric bisections (mid = sqrt(lo * hi)) shrink hi / lo below 1.5.
-///    Each halves ln(hi / lo), which is below 710 for any finite doubles, so 11 steps always suffice;
-///    Newton's method alone would crawl by a factor of only ~1.5 per step from far away, e.g. up to
-///    ~540 steps at the evolute cusp with a tiny y1.
-/// 3. Newton from `lo` (left of the root) converges monotonically for convex decreasing F, with error
-///    e -> ~1.5 e² from e = 0.5: 7 steps reach double precision, at most `MAX_NEWTON_STEPS` are taken.
-///
-/// Worst case: 11 bracketing evaluations + 8 for Newton (at most 7 steps and the convergence check),
-/// 19 in total, typically a handful. Requires e0 > e1 > 0, y0 > 0 and
-/// e1 * y1 >= MIN_RESOLVABLE_PRODUCT.
+/// Worst case is 19 evaluations of F (11 bracketing + 8 Newton), typically a handful.
+/// Requires e0 > e1 > 0, y0 > 0 and e1 * y1 >= MIN_RESOLVABLE_PRODUCT.
 fn ellipse_root(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> f64 {
     ellipse_root_counted(e0, e1, delta, y0, y1).0
 }
@@ -283,7 +269,7 @@ const MAX_NEWTON_STEPS: usize = 16;
 fn ellipse_root_function(n0: f64, n1: f64, c: f64, delta: f64, u: f64) -> f64 {
     let s = u + delta;
     let r1 = n1 / u;
-    // two O(1) ratios rather than a product of two ~n0-sized factors, which overflows for large inputs
+    // two O(1) ratios avoid overflowing a product of two large factors
     ((c - u) / s) * ((n0 + s) / s) + r1 * r1
 }
 
@@ -363,12 +349,12 @@ pub struct Polygon<const D: usize> {
     pub vertices: Vec<Point<D>>,
 }
 
-/// Signed distance to the polygon boundary: the nearest point is searched over the *segments*
-/// (not their infinite lines), and `t` / `projected` describe that point (t in [0, 1] on the edge
-/// `edge_index`). Outside is positive for a counter-clockwise polygon (the sign flips for clockwise).
+/// Signed distance to the polygon boundary, searched over the segments; `t` / `projected` describe the nearest
+/// point (t in [0, 1] on the edge `edge_index`). Outside is positive for a counter-clockwise polygon and
+/// negative for a clockwise one.
 ///
-/// When the nearest point is a vertex, the sign comes from the vertex pseudo-normal (the sum of the
-/// two adjacent edge normals) instead of a single edge, which stays correct at reflex vertices
+/// When the nearest point is a vertex, the sign comes from the vertex pseudo-normal (the sum of the two
+/// adjacent edge normals), which is correct at reflex vertices
 /// (Bærentzen & Aanæs, "Signed Distance Computation Using the Angle Weighted Pseudonormal", 2005).
 ///
 /// ```
@@ -395,7 +381,7 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
         (v[0].get(), v[1].get())
     };
 
-    // Nearest edge by squared distance to the segment (no sqrt per edge); first edge wins ties.
+    // nearest edge by squared segment distance; the first edge wins ties
     let mut best_edge = 0;
     let mut best_t = 0.0;
     let mut best_sq = f64::INFINITY;
@@ -424,8 +410,7 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
     let projected = [Unit::new(x1 + best_t * vx), Unit::new(y1 + best_t * vy)];
     let distance = libm::sqrt(best_sq);
 
-    // Outward (right-hand) unit normal of the first non-degenerate edge at or beyond `from`, walking
-    // in `step` (1 or n - 1) so duplicated vertices do not drop a neighbour from the pseudo-normal.
+    // outward unit normal of the first non-degenerate edge from `from` (skips duplicated vertices)
     let outward_normal = |from: usize, step: usize| -> (f64, f64) {
         for k in 0..n {
             let i = (from + k * step) % n;
@@ -441,7 +426,7 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
     };
 
     let outside = if best_t > 0.0 && best_t < 1.0 {
-        // cross(v, p - a) < 0: right-hand side of the edge, i.e. outside for a counter-clockwise polygon
+        // right of the edge: outside for a counter-clockwise polygon
         vx * (py - y1) - vy * (px - x1) < 0.0
     } else {
         let (vertex_index, previous_edge, next_edge) = if best_t <= 0.0 {
@@ -596,19 +581,6 @@ mod tests {
         as_on_polygon(p(0.0, 0.0), polygon);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Accuracy / robustness tests added with the refinement.
-    //
-    // Data audit notes (see also the commit message):
-    //  * ellipse reference values: 1600-digit geometric bisection (scripts/ref_ellipse.py) on the *exact*
-    //    binary inputs; distances cross-checked against brute-force minimisation (<= 2e-15 apart),
-    //    feet to the brute force's own sqrt(eps) limit and, independently, by the on-ellipse /
-    //    orthogonality property test below. (An earlier 80-digit table mis-evaluated roots 1e-200 away.)
-    //  * polygons: oracle = brute-force segment distance + even-odd rule; random star polygons
-    //    cover acute/obtuse convex and reflex vertices, not only the axis-aligned corners.
-    //  * triangles: oracle = equidistance of the three points from the returned center.
-    // ---------------------------------------------------------------------------------------------
-
     fn close(actual: f64, expected: f64, tolerance: f64) -> bool {
         (actual - expected).abs() <= tolerance * (1.0 + expected.abs())
     }
@@ -690,7 +662,7 @@ mod tests {
 
     #[test]
     fn as_on_polygon_nearest_convex_vertex_gives_euclidean_distance() {
-        // 3-4-5 triangles: the nearest point is the vertex, not the edge's infinite line.
+        // 3-4-5 triangles: the nearest point is the vertex
         let (result, edge) = as_on_polygon(p(13.0, 14.0), square());
         assert_eq!(result.signed_distance.get(), 5.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (10.0, 10.0));
@@ -1193,8 +1165,7 @@ mod tests {
 
     #[test]
     fn as_on_ellipse_closest_point_is_the_foot_of_the_normal() {
-        // independent of the reference table: the foot lies on the ellipse, the query-to-foot vector
-        // is normal to the ellipse there, and no sampled ellipse point is closer
+        // the foot lies on the ellipse, query - foot is normal there, and no sampled ellipse point is closer
         for (rx, ry) in [(4.0, 1.0), (1.0, 4.0), (3.0, 3.0), (100.0, 0.01), (7.0, 6.9)] {
             for ix in -12..=12 {
                 for iy in -12..=12 {
@@ -1234,9 +1205,8 @@ mod tests {
         }
     }
 
-    /// The root finder's cost must not depend on the data: sweep the hard regions (nearly circular,
-    /// extreme eccentricity, query points around the evolute cusp, tiny and huge coordinates) and
-    /// check both the iteration bound and agreement with an independent geometric-bisection root.
+    /// Sweeps the hard regions (nearly circular, extreme eccentricity, the evolute cusp, tiny and huge
+    /// coordinates): the iteration bound holds and the root agrees with a geometric bisection.
     #[test]
     fn ellipse_root_iteration_count_is_bounded_and_agrees_with_reference() {
         let mut worst = 0;
@@ -1285,14 +1255,13 @@ mod tests {
                 }
             }
         }
-        // the bound (11 bracketing + 8 Newton evaluations) is approached only in the extreme corners
+        // the bound of 19 evaluations is approached only in the extreme corners
         assert!(cases > 10_000 && worst >= 10, "cases {cases}, worst {worst}");
     }
 
     #[test]
     fn ellipse_root_exact_cusp_with_tiny_y_stays_within_bound() {
-        // (2, 1): cusp at y0 = (e0^2 - e1^2) / e0 = 1.5, where F's root sits ~1e-200 from the
-        // lower end of the bracket when y1 = 1e-300 (plain Newton needs ~540 steps here)
+        // (2, 1): the evolute cusp is at y0 = (e0² - e1²) / e0 = 1.5
         let (e0, e1, delta) = (2.0, 1.0, 3.0);
         for y1 in [1e-300, 1e-200, 1e-100, 1e-30, 1e-8] {
             let (_, count) = ellipse_root_counted(e0, e1, delta, 1.5, y1);
@@ -1331,7 +1300,7 @@ mod tests {
             assert!(close(c.radius.get() / scale, libm::sqrt(5.0), 1e-14), "scale {scale}");
         }
 
-        // a circle of radius ~7e-6 (the old absolute 1e-8 threshold rejected it)
+        // radius ~7e-6
         let tiny = Circle::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5)).unwrap();
         assert!(close(tiny.center[0].get() / 5e-6, 1.0, 1e-14));
         assert!(close(tiny.radius.get() / 7.0710678118654755e-6, 1.0, 1e-14));
@@ -1349,8 +1318,7 @@ mod tests {
                             (offset + scale * lcg(&mut state), -offset + scale * lcg(&mut state))
                         })
                         .collect();
-                    // skip thin triangles (the circle is ill-conditioned there) and ones the input
-                    // grid at this offset cannot resolve
+                    // skip thin triangles and offsets the input grid cannot resolve
                     let cross = (pts[1].0 - pts[0].0) * (pts[2].1 - pts[0].1)
                         - (pts[1].1 - pts[0].1) * (pts[2].0 - pts[0].0);
                     let longest_sq = (0..3)
@@ -1413,8 +1381,6 @@ mod tests {
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).is_none());
     }
 
-    // ---- as_on_line: distance from differences only (independent of the coordinates' magnitude) ----
-
     #[test]
     fn as_on_line_distance_is_exact_for_integer_geometry_at_any_offset() {
         // v = (3, 4), |v| = 5: w = (1, 0) gives cross = -4 -> -0.8, w = (7, 2) -> -4.4, w = (-1, 2) -> +2
@@ -1432,8 +1398,7 @@ mod tests {
 
     #[test]
     fn as_on_line_random_integer_lines_satisfy_the_exact_distance_identity() {
-        // d² * |v|² = cross² holds exactly in the reals; cross and |v|² are integers here, so the
-        // check does not depend on how the distance is computed
+        // d² |v|² = cross² exactly in the reals; cross and |v|² are integers here
         let mut state = 21;
         for offset in [0.0, 1e6, 1e9, 1e12] {
             for _ in 0..300 {

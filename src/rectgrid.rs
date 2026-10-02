@@ -218,8 +218,7 @@ impl IncrementFunction {
                 }
                 Ok(Accumulator::VectorList(pxs))
             }
-            // The forward closure's boundary shape is unknown in general, so the inverse scans the
-            // segments in order (see forward_difference_inverse) over the same closure.
+            // the boundary shape of the closure is unknown, so the inverse scans its segments
             Self::ForwardDifference(f) => {
                 let fwd = f.clone();
                 let forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>> = Box::new(move |x| {
@@ -242,17 +241,12 @@ impl IncrementFunction {
     }
 }
 
-/// Inverts px to unit for a ForwardDifference definition (the only variant without an analytical
-/// or array-based inverse).
-/// forward is piecewise linear (`S(k) + f(k) * (x - k)` on [k, k+1], S(k) = f(0) + ... + f(k-1)), so
-/// the inverse is exact: scan the segments until S(k) <= target <= S(k+1), then solve for the
-/// fraction in closed form. The sums are accumulated in the same order as forward, so
-/// `inverse(forward(x))` returns `x` up to rounding of the final division, and exactly `k` for
-/// `forward(k)` (a grid line must not come back as k - epsilon: floor would then pick the cell before).
-/// Cost: one call of f per segment up to the answer, i.e. the same order as one forward call (the
-/// answer's index is the only thing it depends on). A target beyond a domain that never ends and
-/// never reaches it (f never returns OutOfIndex and its sum converges below target) is scanned up
-/// to u32::MAX segments, as forward would be.
+/// Inverts px to unit for a ForwardDifference definition.
+/// forward is piecewise linear (`S(k) + f(k) * (x - k)` on [k, k+1], S(k) = f(0) + ... + f(k-1)), so the
+/// inverse scans the segments until S(k) <= target <= S(k+1) and solves the last one in closed form.
+/// The sums are accumulated in the same order as forward, so `forward(k)` maps back to exactly `k`.
+/// Cost is one call of f per segment up to the answer; an unbounded f whose sum never reaches target
+/// is scanned up to u32::MAX segments.
 /// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
 fn forward_difference_inverse(
     f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
@@ -268,11 +262,11 @@ fn forward_difference_inverse(
 
     let mut accumulated = 0.0;
     for k in 0..=u32::MAX {
-        // Err(OutOfIndex(last)) means the domain ended before reaching target: propagated as is.
+        // Err(OutOfIndex(last)): the domain ends before target, propagated as is
         let step = f(k)?.get();
         let next = accumulated + step;
         if next >= target {
-            // next == target is exactly forward(k + 1): return the integer, not 1 - epsilon
+            // next == target is forward(k + 1) exactly
             let frac = if next == target {
                 1.0
             } else if step == 0.0 {
@@ -324,8 +318,7 @@ impl Accumulator {
     pub fn inverse(&self, target: Px) -> Result<Unit, RectgridError> {
         match self {
             Self::Scale(s) => {
-                // forward is s * x, so the quotient can miss an integer by an ulp (0.3 / 0.1 =
-                // 2.9999999999999996): when s * round(quotient) is exactly the target, it is that integer.
+                // the quotient can miss an integer by an ulp (0.3 / 0.1 = 2.9999999999999996)
                 let quotient = target.get() / s;
                 let nearest = libm::round(quotient);
                 Ok(Unit::new(if s * nearest == target.get() { nearest } else { quotient }))
@@ -424,9 +417,8 @@ impl<const D: usize> RectGrid<D> {
         self.accumulator[d].forward(unit.get())
     }
 
-    /// Converts multiple unit coordinate points to px. Each axis is evaluated independently: a point
-    /// gives one `Result` per axis, so an unevaluable axis (Err, e.g. OutOfIndex(last) of that axis's
-    /// domain) does not affect the other axes or the other points.
+    /// Converts multiple unit coordinate points to px. Each axis is evaluated independently:
+    /// a point gives one `Result` per axis (Err, e.g. OutOfIndex(last), for an unevaluable axis).
     ///
     /// ```
     /// extern crate alloc;
@@ -450,8 +442,7 @@ impl<const D: usize> RectGrid<D> {
         points.iter().map(|pt| from_fn(|d| self.unit_to_px(d, &pt[d]))).collect()
     }
 
-    /// unit_to_px for an edge added by `extend`: past the end of a finite domain (OutOfIndex) the
-    /// extension is clipped at the last valid unit instead of failing.
+    /// unit_to_px for an `extend` edge: past the end of a finite domain the edge is clipped at the last valid unit.
     fn unit_to_px_clipped(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
         match self.unit_to_px(d, unit) {
             Err(RectgridError::OutOfIndex(last)) => self.accumulator[d].forward(last as f64),
@@ -463,10 +454,9 @@ impl<const D: usize> RectGrid<D> {
     /// point may be passed as-is in viewport coordinates (origin is subtracted internally).
     /// extend is added to base/offset in unit space before conversion to px
     /// (if converted to px individually and added afterward, the width would drift depending on boundary position for a nonlinear accumulator).
-    /// Returns None when the box is not evaluable (box_as_px is Err on some axis for it, e.g. it lies,
-    /// even partly, outside a finite domain): such a box is never hit. An extend edge past the end of a
-    /// finite domain is clipped at the end (see unit_to_px_clipped).
-    /// Otherwise: (whether it hit, base_px without extend, offset_px without extend).
+    /// Returns None when the box is not evaluable (some axis of box_as_px is Err): it is never hit.
+    /// An extend edge past the end of a finite domain is clipped there (see unit_to_px_clipped).
+    /// Otherwise returns: (whether it hit, base_px without extend, offset_px without extend).
     /// base_px/offset_px are returned alongside the hit test so they can be reused directly for parameter calculation.
     fn contains(
         &self,
@@ -512,8 +502,7 @@ impl<const D: usize> RectGrid<D> {
 
     /// Returns the highest index among the boxes that point hits (a higher index in boxes is treated as higher priority).
     /// When multiple boxes hit, the higher index wins, so the scan runs from the tail.
-    /// A box that is not evaluable (box_as_px is Err on some axis for it) is never hit. An extend that reaches
-    /// past the end of a finite domain is clipped at the end.
+    /// A box that is not evaluable (some axis of box_as_px is Err) is never hit; an extend past a finite domain end is clipped there.
     ///
     /// ```
     /// extern crate alloc;
@@ -600,11 +589,9 @@ impl<const D: usize> RectGrid<D> {
     /// `ξ_d = (point_d − base_d) / offset_d`
     /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
     /// point may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
-    /// Each axis is evaluated independently and gives its own `Result`: an axis whose base or
-    /// base + offset cannot be evaluated (e.g. it lies, even partly, outside that axis's finite
-    /// domain) is Err (OutOfIndex(last) carries the last valid unit, enough to clamp with
-    /// unit_to_px), and the other axes are unaffected. Non-finite inputs are not checked: they give
-    /// a NaN or infinite parameter inside Ok.
+    /// Each axis is evaluated independently and gives its own `Result`: an axis whose base or base + offset
+    /// cannot be evaluated is Err (OutOfIndex(last) carries the last valid unit, enough to clamp with unit_to_px).
+    /// Non-finite inputs are not checked and give a NaN or infinite parameter inside Ok.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit};
@@ -634,8 +621,8 @@ impl<const D: usize> RectGrid<D> {
 
     /// Converts multiple BBox to (base_px, offset_px) per axis. offset_px is the actual side length accounting for base position
     /// (unit_to_px(base+offset) - unit_to_px(base)), which stays correct for base position even under a nonlinear
-    /// accumulator (ForwardDifference/VectorList). Each axis is evaluated independently: a box gives one `Result` per axis,
-    /// so an unevaluable axis (Err, e.g. OutOfIndex(last) of that axis's domain) does not affect the other axes or the other boxes.
+    /// accumulator (ForwardDifference/VectorList). Each axis is evaluated independently: a box gives one `Result` per axis
+    /// (Err, e.g. OutOfIndex(last), for an unevaluable axis).
     ///
     /// ```
     /// extern crate alloc;
@@ -738,7 +725,7 @@ pub fn corner_test<const D: usize>(
     if !bx.has_size() {
         return (None, None);
     }
-    // an axis that cannot be evaluated leaves no parameter to test against
+    // an unevaluable axis leaves no parameter to test
     let mut parameter = [Parameter::new(0.0); D];
     for (axis, result) in grid.get_parameter(point, *bx).into_iter().enumerate() {
         match result {
@@ -1109,12 +1096,6 @@ mod tests {
         assert_eq!(resized.base[0].get(), 3.0);
         assert_eq!(resized.offset[0].get(), 1.0);
     }
-    // ---- ForwardDifference inverse: exact segment scan ----
-    //
-    // Data audit: the first version only exercised one smooth increment around x ~ 1e4. The sets
-    // below add extreme step magnitudes, a steadily growing step, an irregular (hashed) step,
-    // sub-unit and large x, plateaus, finite domains and non-finite targets.
-
     type Steps = Rc<dyn Fn(u32) -> Result<Px, RectgridError>>;
 
     /// A non-uniform increment (1.0 ... 1.016) that has no closed form.
@@ -1162,8 +1143,7 @@ mod tests {
             let acc = accumulator(steps);
             for &x in xs {
                 let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
-                // a few ulp of x: the only rounding left is the final division
-                assert!((back - x).abs() <= 1e-14 * (1.0 + x), "{name}: x = {x}: {back}");
+                assert!((back - x).abs() <= 4.0 * f64::EPSILON * x, "{name}: x = {x}: {back}");
             }
         }
     }
@@ -1178,7 +1158,7 @@ mod tests {
                 let back = acc.inverse(acc.forward(x).unwrap()).unwrap().get();
                 worst = worst.max((back - x).abs());
             }
-            // one ulp of 12345 is 1.8e-12; the former unit-space bisection stopped at 1e-9
+            // ulp(12345) = 1.8e-12
             assert!(worst <= 1e-11, "worst roundtrip error {worst:e}");
         }
     }
@@ -1233,9 +1213,6 @@ mod tests {
         assert_eq!(calls.get(), 1001);
     }
 
-    // ---- boxes outside a finite domain: not evaluable, never hit (previously evaluation errors were
-    // ---- replaced by 0.0 px, so a box beyond the domain "hit" at the origin) ----
-
     fn vector_list_grid(pxs: &[f64]) -> RectGrid<1> {
         RectGrid::<1>::new(
             [Px::new(0.0)],
@@ -1258,7 +1235,7 @@ mod tests {
             assert_eq!(grid.hit_tests([Px::new(px)], &boxes, None), alloc::vec![false], "px {px}");
             assert!(grid.hit_test_with_parameter([Px::new(px)], &boxes, None).is_none(), "px {px}");
         }
-        // an in-domain box in the same list is still found
+        // an in-domain box in the same list is found
         let boxes = alloc::vec![unit_box(0.0, 1.0), unit_box(5.0, 1.0)];
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), Some(0));
         assert_eq!(grid.hit_tests([Px::new(5.0)], &boxes, None), alloc::vec![true, false]);
@@ -1280,7 +1257,6 @@ mod tests {
             let parameter = grid.get_parameter([Px::new(5.0)], bx);
             assert!(matches!(parameter[0], Err(RectgridError::OutOfIndex(1))));
         }
-        // an evaluable box is unaffected
         let parameter = grid.get_parameter([Px::new(5.0)], unit_box(0.0, 1.0));
         assert_eq!(parameter[0].as_ref().unwrap().get(), 0.5);
     }
@@ -1297,21 +1273,20 @@ mod tests {
 
     #[test]
     fn hit_test_extend_is_clipped_at_the_domain_end() {
-        // VectorList [0, 10, 30]: domain units 0..=2. The box is the last cell (px 10..30); extending
-        // its far side by 5 units reaches past the domain. It used to make the whole box unhittable.
+        // VectorList [0, 10, 30]: the box is the last cell (px 10..30) and extend reaches past the domain end
         let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
         let boxes = alloc::vec![unit_box(1.0, 1.0)];
         let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
         assert_eq!(grid.hit_test([Px::new(20.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(30.0)], &boxes, extend), Some(0));
-        // the clip is the end of the grid: nothing beyond it, nothing before the box's own base
+        // clipped at the grid end; nothing before the box's own base
         assert_eq!(grid.hit_test([Px::new(30.5)], &boxes, extend), None);
         assert_eq!(grid.hit_test([Px::new(9.0)], &boxes, extend), None);
-        // extending the base side inward-out still works
+        // extend on the base side
         let extend = Some(([Unit::new(-0.5)], [Unit::new(0.0)]));
         assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(4.0)], &boxes, extend), None);
-        // the parameter is still relative to the box itself
+        // the parameter is relative to the box, not to extend
         let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
         let (_, parameter) = grid.hit_test_with_parameter([Px::new(20.0)], &boxes, extend).unwrap();
         assert_eq!(parameter[0].get(), 0.5);
@@ -1373,16 +1348,10 @@ mod tests {
             grid.get_parameter([Px::new(0.0)], boxes[0])[0],
             Err(RectgridError::InvalidDefinition)
         ));
-        // an error is not clipped away as if it were a domain end
+        // only OutOfIndex is clipped
         let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
     }
-
-    // ---- grid lines: inverse(forward(k)) is exactly k (floor must not pick the cell before) ----
-    //
-    // Before the fix, Scale(0.1) returned 42.99999999999999 for k = 43 (6546 of 100000 k below k),
-    // Scale(1/3) 11487, Scale(1.1) 2384, ForwardDifference (wavy) 11 of 3000. Scales that are
-    // exact in binary (1.5, 64, 200) and VectorList were already exact.
 
     fn assert_grid_lines_exact(name: &str, acc: &Accumulator, count: u32) {
         for k in 0..count {
@@ -1473,8 +1442,6 @@ mod tests {
         }
     }
 
-    // ---- per-axis Result: what a caller does with an Err ----
-
     #[test]
     fn a_failed_axis_can_be_clamped_with_the_last_index_it_reports() {
         let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
@@ -1500,7 +1467,7 @@ mod tests {
         let (parameter, corner) =
             corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &beyond, 0.1, None);
         assert!(parameter.is_none() && corner.is_none());
-        // the same box on an evaluable axis is found as before
+        // an evaluable box gives a parameter
         let inside = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
         let (parameter, _) = corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &inside, 0.1, None);
         assert!(parameter.is_some());

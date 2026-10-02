@@ -86,22 +86,22 @@ cargo +nightly fmt
 |                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | Builds a forward/inverse `Accumulator` from the definition |
 | `Accumulator` | `Scale` | `f64` | - | Inverse resolves analytically (`target / s`), no search needed |
 |               | `VectorList` | `Vec<Px>` | - | Inverse resolves via `partition_point` + O(1) linear-interpolation solve |
-|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | The only variant still boxing closures; inverse scans the segments and solves the last one exactly (the cost of one `forward` call) |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | The only variant boxing closures; inverse scans the segments |
 |               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit coordinate -> px |
 |               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit coordinate |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | Start point |
 |               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | Replaces the definition for axis d |
-|               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | Numerically inverts px to unit (origin is subtracted before conversion; assumes the accumulator is monotonically non-decreasing over Unit >= 0) |
+|               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | Inverts px to unit (origin subtracted first); the accumulator must be non-decreasing over Unit >= 0 |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | Converts a unit coordinate to px (evaluates the accumulator directly) |
-|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | Converts multiple unit coordinate points to px. Each axis is evaluated independently: a point gives one Result per axis, so an unevaluable axis (Err, e.g. `OutOfIndex(last)`) does not affect the other axes or points |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts multiple BBox to (base_px, offset_px) per axis. offset_px is the actual side length accounting for base position (unit_to_px(base+offset) − unit_to_px(base)), correct even under a nonlinear accumulator. Each axis is evaluated independently: an unevaluable axis is Err (e.g. `OutOfIndex(last)`) and does not affect the other axes or boxes |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boxes point hits. A box with an unevaluable axis (e.g. outside a finite domain; `box_as_px` is Err on some axis for it) never hits; an `extend` past the end of a finite domain is clipped at the end |
+|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | Converts unit points to px, one Result per axis |
+|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts boxes to (base_px, offset_px), one Result per axis |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boxes point hits; an unevaluable box never hits |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | Like hit_test, returns the highest-index hit along with the get_parameter-equivalent value |
 |               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Scans every box point hits and returns hit/no-hit for each, in a Vec the same length as boxes |
-|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | Signed local coordinate for a single box, with each side length normalized to 1. Each axis is evaluated independently: an axis whose base or base + offset cannot be evaluated is Err (e.g. `OutOfIndex(last)`); non-finite inputs are not checked and give NaN/inf inside Ok |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | Signed local coordinate (side length normalized to 1), one Result per axis |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointer's local coordinate (after origin correction) with z subtracted |
-| - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | For a BBox with area, determines whether point is near an edge (within threshold) |
+| - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | For a BBox with area, determines whether point is near an edge (within threshold) |
 | - | `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | Updates BBox's base/offset via a corner-handle drag |
 | - | `drag_translate<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | Computes base's px position during a move drag |
 | - | `snap_region_to_unit<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | At DragEnd, snaps the move-drag result of a BBox with area to the Unit grid |
@@ -113,8 +113,10 @@ cargo +nightly fmt
 |-|-|-|-|-|
 | `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | Forward/inverse conversion per axis |
 |               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | Delegates to `accumulator[i].inverse` |
-|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `(bool, [Px; D], [Px; D])` | Hit test backing hit_test/hit_tests/hit_test_with_parameter |
-|               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | Shared by get_parameter/hit_test_with_parameter |
+|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | Hit test backing hit_test/hit_tests/hit_test_with_parameter; None if the box is unevaluable |
+|               | `unit_to_px_clipped` | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit_to_px for an extend edge, clipped at a finite domain end |
+|               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | Shared by hit_test_with_parameter |
+|               | `parameter_axis` | `point: Px, base_px: Px, far_px: Px` | `Parameter` | One axis of parameter_from_px, shared by get_parameter |
 
 ---
 
@@ -161,22 +163,22 @@ cargo +nightly fmt
 |                     | `accumulate` | `self` | `Result<Accumulator, RectgridError>` | 定義から順変換・逆変換を持つ`Accumulator`を構築する |
 | `Accumulator` | `Scale` | `f64` | - | 逆変換は解析的(`target / s`)に即決、探索不要 |
 |               | `VectorList` | `Vec<Px>` | - | 逆変換は`partition_point`と線形補間の逆算(O(1))で解決 |
-|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | クロージャを保持し続ける唯一のバリアント。逆変換は区間を順に走査し、最後の区間を厳密に解く(`forward` 1回分の計算量) |
+|               | `ForwardDifference` | `{ forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>, inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> }` | - | クロージャを保持し続ける唯一のバリアント。逆変換は区間を走査して解く |
 |               | `forward` | `x: f64` | `Result<Px, RectgridError>` | unit座標 -> px |
 |               | `inverse` | `target: Px` | `Result<Unit, RectgridError>` | px -> unit座標 |
 | `RectGrid<D>` | `origin` | - | `[Px; D]` | 始点 |
 |               | `new`                 | `origin: [Px; D], definitions: [IncrementFunction; D]` | `Result<Self, RectgridError>` | - |
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | d軸の定義を差し替える |
-|               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ数値的に逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
+|               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
-|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | 複数のunit座標点をpxへ変換。各軸は独立に評価され、点ごとに軸ごとのResultを返す。評価不能な軸(`OutOfIndex(last)`等)は他の軸・他の点に影響しない |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | 複数のBBoxを軸ごとに(base_px, offset_px)へ変換。offset_pxはbase位置を踏まえた実際の辺の長さ(unit_to_px(base+offset) − unit_to_px(base))で、非線形なaccumulatorでも正しい長さになる。各軸は独立に評価され、評価不能な軸は`OutOfIndex(last)`等のErrとなり、他の軸・他のboxに影響しない |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す。評価不能な軸を持つbox(有限の定義域の外にある等。`box_as_px`のいずれかの軸がErrになるもの)は常にhitしない。定義域の終端を越える`extend`は終端で切り詰める |
+|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | 複数のunit座標点をpxへ変換。軸ごとのResultを返す |
+|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | 複数のBBoxを(base_px, offset_px)へ変換。軸ごとのResultを返す |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す。評価不能なboxはhitしない |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
 |               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す |
-|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | 単一boxの各辺長を1とした符号付き局所座標。各軸は独立に評価され、baseまたはbase+offsetが評価不能な軸は`OutOfIndex(last)`等のErrとなる。非有限値の入力は検査せず、Okの中でNaN/infになる |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | 単一boxの各辺長を1とした符号付き局所座標。軸ごとのResultを返す |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
-| - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
+| - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
 | - | `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | 角ハンドルドラッグによってBBoxのbase/offsetを更新する |
 | - | `drag_translate<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | 移動ドラッグ中のbaseのpx位置を求める |
 | - | `snap_region_to_unit<D>` | `grid: &RectGrid<D>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持つBBoxの移動ドラッグ結果をUnit格子にスナップする |
@@ -188,5 +190,7 @@ cargo +nightly fmt
 |-|-|-|-|-|
 | `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | 各軸の順変換・逆変換 |
 |               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | accumulator[i].inverseに委譲 |
-|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `(bool, [Px; D], [Px; D])` | hit_test/hit_tests/hit_test_with_parameterの共通判定 |
-|               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | get_parameter/hit_test_with_parameterで共有 |
+|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | hit_test/hit_tests/hit_test_with_parameterの共通判定。boxが評価不能ならNone |
+|               | `unit_to_px_clipped` | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | extend辺用のunit_to_px。有限の定義域の終端で切り詰める |
+|               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | hit_test_with_parameterで使用 |
+|               | `parameter_axis` | `point: Px, base_px: Px, far_px: Px` | `Parameter` | parameter_from_pxの1軸分。get_parameterで共有 |
