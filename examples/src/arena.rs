@@ -40,7 +40,6 @@ pub const COMMAND_SLOT_COUNT: u32 = 64;
 pub const ARENA_SIZE: usize = COMMAND_PAYLOAD + COMMAND_SLOT * COMMAND_SLOT_COUNT as usize;
 
 pub const CONTROL_WRITE_OFFSET: usize = 0;
-///
 pub const CONTROL_READ_OFFSET: usize = 64;
 pub const CONTROL_SIZE: usize = 2 * CONTROL_READ_OFFSET;
 pub const LENGTH_PREFIX: usize = 4;
@@ -56,7 +55,6 @@ unsafe impl Sync for Arena {}
 
 pub static ARENA: Arena = Arena { bytes: UnsafeCell::new([0; ARENA_SIZE]) };
 
-///
 pub static mut APP: Option<App> = None;
 
 pub static mut RUNNING: bool = true;
@@ -81,7 +79,6 @@ impl Arena {
         self.control_at(COMMAND_CONTROL, CONTROL_READ_OFFSET).store(0, Ordering::Relaxed);
     }
 
-    ///
     pub(crate) fn ring_push(
         &self,
         control: usize,
@@ -117,7 +114,6 @@ impl Arena {
         true
     }
 
-    ///
     pub(crate) fn ring_peek(
         &self,
         control: usize,
@@ -176,13 +172,11 @@ impl Arena {
 // === arena entry point ===
 //
 
-///
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn arena_pointer() -> u32 {
     ARENA.base() as u32
 }
 
-///
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn initialize() {
     ARENA.initialize();
@@ -212,8 +206,6 @@ pub fn process_event() {
     }
 }
 
-///
-///
 #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
 #[wasm_bindgen]
 pub fn serve_event() {
@@ -229,7 +221,6 @@ pub fn serve_event() {
     }
 }
 
-///
 pub fn emit(frame: &[u8]) -> bool {
     let pushed = ARENA.command_push(frame);
 

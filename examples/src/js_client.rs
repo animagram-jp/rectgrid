@@ -855,7 +855,6 @@ pub enum Gesture {
     }, // in dragging
     DragEnd,
     DragCancel,
-    ///
     Pinch {
         scale:    f64,
         center_x: f64,
@@ -864,10 +863,6 @@ pub enum Gesture {
     PinchEnd,
 }
 
-///
-///
-///
-///
 #[must_use]
 pub fn detect_gesture(
     state: &mut PointerState,
@@ -906,7 +901,6 @@ fn detect_on_release(
     }
     let distance = state.distance();
 
-    //
     let move_dt = current_time - state.last_move_time;
     let velocity = if move_dt > 0.0 {
         let mdx = state.current_x - state.last_move_x;
@@ -1216,10 +1210,8 @@ enum TwoFingerMode {
     Pinch,
 }
 
-///
 const TWO_FINGER_COMMIT_PX: f64 = 8.0;
 
-///
 const PINCH_DOT_THRESHOLD: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1301,7 +1293,6 @@ impl TwoFingerState {
         self.primary.map(|p| (p.current_x, p.current_y))
     }
 
-    ///
     #[must_use]
     fn fold(&mut self) -> FoldedInput {
         let (Some(p), Some(s)) = (self.primary, self.secondary) else {
@@ -1350,14 +1341,6 @@ fn two_point_distance(x0: f64, y0: f64, x1: f64, y1: f64) -> f64 {
     libm::sqrt(dx * dx + dy * dy)
 }
 
-///
-///
-///
-///
-///
-///
-///
-///
 #[derive(Debug, Default)]
 pub struct TouchTracker {
     primary_state: PointerState,
@@ -1743,7 +1726,6 @@ mod touch_tracker_tests {
         assert_eq!(got[6], Some(Gesture::Pinch { scale: 0.2, center_x: 150.0, center_y: 100.0 }));
     }
 
-    ///
     #[test]
     fn duplicate_pointer_down_does_not_reset_primary_state() {
         let th = Thresholds::MOUSE;
