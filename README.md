@@ -108,13 +108,6 @@ cargo +nightly fmt
 | - | `drag_translate<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | Computes base's px position during a move drag |
 | - | `snap_bbox_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | At DragEnd, snaps the move-drag result of a boundary box with area to the Unit grid |
 | - | `snap_point_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], snap: [Unit; D]` | `Result<BBox<D>, RectgridError>` | At DragEnd, computes a boundary box snapped to the Unit grid from the move-drag result of a boundary box without area (a point) |
-
-## Geometry ports
-
-Requires the `geometry` feature (`rectgrid::geometry`).
-
-| Item | Port | Parameter | Return | Description |
-|-|-|-|-|-|
 | `Line<D>` | `start` | - | `Point<D>` | Start point |
 |           | `end` | - | `Point<D>` | End point |
 | `Circle<D>` | `center` | - | `Point<D>` | Center |
@@ -210,13 +203,6 @@ Requires the `geometry` feature (`rectgrid::geometry`).
 | - | `drag_translate<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | 移動ドラッグ中のbaseのpx位置を求める |
 | - | `snap_bbox_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持つboundary boxの移動ドラッグ結果をUnit格子にスナップする |
 | - | `snap_point_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], snap: [Unit; D]` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持たない(点の)boundary boxの移動ドラッグ結果をUnit格子にスナップしたboundary boxを求める |
-
-## geometryポート
-
-`geometry` featureが必要(`rectgrid::geometry`)。
-
-| アイテム | ポート | 引数 | 戻り値 | 説明 |
-|-|-|-|-|-|
 | `Line<D>` | `start` | - | `Point<D>` | 始点 |
 |           | `end` | - | `Point<D>` | 終点 |
 | `Circle<D>` | `center` | - | `Point<D>` | 中心 |
