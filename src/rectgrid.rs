@@ -167,7 +167,8 @@ pub enum IncrementFunction {
     /// Fn(i) = points[i+1] - points[i]
     /// OutOfIndex means boundary; the argument is the difference's index (integer).
     /// The closure must, when out of range, saturate to the last valid index within range and return it as OutOfIndex.
-    /// todo: verify whether a scattered distribution of OutOfIndex is acceptable
+    /// The domain ends at the first Err: units beyond it are unevaluable even if f returns Ok again later,
+    /// and the reported index must be that of the first Err.
     ForwardDifference(Rc<dyn Fn(u32) -> Result<Px, RectgridError>>),
     /// Finite domain. Array enumerating unit values of the interval from the origin in the positive direction.
     VectorList(Vec<Px>),
