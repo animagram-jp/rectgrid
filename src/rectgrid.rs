@@ -9,6 +9,7 @@ use core::{
 
 use crate::RectgridError;
 
+#[repr(transparent)]
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
 impl<Tag> Clone for Value<Tag> {
@@ -84,7 +85,13 @@ pub type Parameter = Value<ParameterTag>;
 
 pub type Point<const D: usize> = [Unit; D];
 
+/// Layout, one f64 per cell:
+///
+/// ```text
+/// | base[0] .. base[D-1] | offset[0] .. offset[D-1] |
+/// ```
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct BBox<const D: usize> {
     pub(crate) base:   Point<D>,
     pub(crate) offset: Point<D>,
