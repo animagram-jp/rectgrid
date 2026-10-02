@@ -24,7 +24,8 @@ rectgrid = { version = "0.2", features = ["geometry"] }
 |---------|-----------|------------|-------------|
 | 0.1.0   | Released  | 2026-07-10 | 1st release |
 | 0.1.1   | Released  | 2026-07-13 | improve performance(#7) |
-| 0.2.0   | Released  | 2026-10-01 | improve BBox::new() |
+| 0.2.0   | Released  | 2026-10-01 | add BBox::new() |
+| 0.3.0   | Released  | 2026-10-02 | improve algorithm and tests |
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
