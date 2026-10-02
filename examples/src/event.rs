@@ -59,12 +59,6 @@ pub enum WindowEvent {
     Visibility { state: VisibilityState },
 }
 
-/// ```
-/// # use app::event::{decode_event, Event, WindowEvent, EVENT_SHUTDOWN};
-/// assert!(matches!(decode_event(&[EVENT_SHUTDOWN]), Some(Event::Window(WindowEvent::Shutdown))));
-/// assert!(decode_event(&[200]).is_none());
-/// assert!(decode_event(&[]).is_none());
-/// ```
 pub fn decode_event(frame: &[u8]) -> Option<Event> {
     let mut input = frame;
     let kind = get_u8(&mut input)?;

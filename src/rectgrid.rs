@@ -80,7 +80,7 @@ pub type Px = Value<PxTag>;
 /// Arbitrary orthogonal unit system, finite or infinite per axis, whose value is an ordinal from its own origin in the positive direction.
 pub type Unit = Value<UnitTag>;
 
-/// Unbounded local coordinate system for a single BBox, where each side length is 1 and sign follows the unit coordinate.
+/// Unbounded local coordinate system for a single boundary box, where each side length is 1 and sign follows the unit coordinate.
 pub type Parameter = Value<ParameterTag>;
 
 pub type Point<const D: usize> = [Unit; D];
@@ -154,7 +154,7 @@ impl<const D: usize> BBox<D> {
         self
     }
 
-    /// Whether every axis of offset is nonzero, i.e. the BBox has area/volume.
+    /// Whether every axis of offset is nonzero, i.e. the boundary box has area/volume.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
@@ -602,7 +602,7 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
         })
     }
 
-    /// Converts multiple BBox to (base_px, offset_px) per axis, with offset_px = unit_to_px(base+offset) - unit_to_px(base)
+    /// Converts multiple boundary boxes to (base_px, offset_px) per axis, with offset_px = unit_to_px(base+offset) - unit_to_px(base)
     /// (correct under a nonlinear accumulator). Each axis is evaluated independently: a boundary box gives one `Result` per axis
     /// (Err, e.g. OutOfIndex(last), for an unevaluable axis).
     ///
@@ -646,7 +646,7 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     }
 }
 
-/// For a BBox with area, determines per axis whether point is near an edge (within threshold).
+/// For a boundary box with area, determines per axis whether point is near an edge (within threshold).
 /// Returns (each axis's parameter, corner result). A corner element is Some(true) near the base-side edge
 /// ([0, threshold]), Some(false) near the offset-side edge ([1 - threshold, 1]) and None otherwise.
 /// If any axis is Some it is a handle hit (all axes Some = corner, one = edge); all None returns None
@@ -724,7 +724,7 @@ pub fn corner_test<const D: usize, P: StepFn>(
     (Some(parameter), corner)
 }
 
-/// Updates BBox's base/offset via a corner-handle drag. corner[d] = Some(base_side): true moves the
+/// Updates the boundary box's base/offset via a corner-handle drag. corner[d] = Some(base_side): true moves the
 /// base-side edge, false the offset-side edge. The new offset is at least 1.0 unit (base/offset never cross).
 ///
 /// ```
@@ -766,8 +766,8 @@ pub fn drag_resize<const D: usize, P: StepFn>(
     Ok(resized)
 }
 
-/// Computes base's px position during a move drag. BBox keeps base in Unit, so the px position is only
-/// returned; it is committed to BBox by snap_bbox_to_unit (or snap_point_to_unit) at drag end.
+/// Computes base's px position during a move drag. A boundary box keeps base in Unit, so the px position is only
+/// returned; it is committed to the boundary box by snap_bbox_to_unit (or snap_point_to_unit) at drag end.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, drag_translate};
@@ -786,7 +786,7 @@ pub fn drag_translate<const D: usize, P: StepFn>(
     grid.offset(pointer, drag_offset)
 }
 
-/// At drag end, snaps the move-drag result of a BBox with area to the Unit grid and returns the updated BBox.
+/// At drag end, snaps the move-drag result of a boundary box with area to the Unit grid and returns the updated boundary box.
 /// drag_offset must be the value passed to drag_translate. extend is added before flooring.
 ///
 /// ```
@@ -820,7 +820,7 @@ pub fn snap_bbox_to_unit<const D: usize, P: StepFn>(
     Ok(snapped)
 }
 
-/// At drag end, computes a BBox snapped to the Unit grid from the move-drag result of a point BBox (no area).
+/// At drag end, computes a boundary box snapped to the Unit grid from the move-drag result of a boundary box without area (a point).
 /// drag_offset must be the value passed to drag_translate.
 ///
 /// ```

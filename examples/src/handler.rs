@@ -99,7 +99,7 @@ impl Handler {
         let resolved = self.rectgrid.box_as_px(&boxes);
         for (z, ((n, bx), px_result)) in self.articles.iter().zip(resolved).enumerate() {
             if let [Ok((base_x, size_x)), Ok((base_y, size_y))] = px_result {
-                commands.push(translate_card(*n, base_x.get(), base_y.get()));
+                commands.push(translate_article(*n, base_x.get(), base_y.get()));
                 if bx.has_size() {
                     commands.push(size_px(*n, StyleProperty::Width, size_x.get()));
                     commands.push(size_px(*n, StyleProperty::Height, size_y.get()));
@@ -186,7 +186,7 @@ impl Handler {
         let mut commands = vec![grid_background(section_width_px)];
         for ((n, bx), px_result) in self.articles.iter().zip(resolved) {
             let [Ok((base_x, size_x)), Ok((base_y, size_y))] = px_result else { continue };
-            commands.push(translate_card(*n, base_x.get(), base_y.get()));
+            commands.push(translate_article(*n, base_x.get(), base_y.get()));
             if bx.has_size() {
                 commands.push(size_px(*n, StyleProperty::Width, size_x.get()));
                 commands.push(size_px(*n, StyleProperty::Height, size_y.get()));
@@ -217,7 +217,7 @@ impl Handler {
         let drag_offset = [Px::new(self.drag_offset.0), Px::new(self.drag_offset.1)];
         if !bx.has_size() {
             let px = drag_translate(&self.rectgrid, pointer, drag_offset);
-            return (vec![], vec![translate_card(index, px[0].get(), px[1].get())]);
+            return (vec![], vec![translate_article(index, px[0].get(), px[1].get())]);
         }
         if let Some(corner) = self.drag_corner {
             let Ok(new_bx) = drag_resize(&self.rectgrid, pointer, bx, corner) else {
@@ -227,7 +227,7 @@ impl Handler {
             let base_px = self.base_px(&new_bx);
             let size = self.size_px(&new_bx, base_px);
             let mut commands = vec![
-                translate_card(index, base_px[0].get(), base_px[1].get()),
+                translate_article(index, base_px[0].get(), base_px[1].get()),
                 size_px(index, StyleProperty::Width, size[0].get()),
                 size_px(index, StyleProperty::Height, size[1].get()),
             ];
@@ -236,7 +236,7 @@ impl Handler {
         }
         let offset = bx.offset();
         let px = drag_translate(&self.rectgrid, pointer, drag_offset);
-        let mut commands = vec![translate_card(index, px[0].get(), px[1].get())];
+        let mut commands = vec![translate_article(index, px[0].get(), px[1].get())];
         commands.extend(self.check_drop_zone(px, offset));
         (vec![], commands)
     }
@@ -280,7 +280,7 @@ impl Handler {
             });
             if let Some(new_bx) = snapped {
                 let base_px = self.base_px(&new_bx);
-                commands.push(translate_card(index, base_px[0].get(), base_px[1].get()));
+                commands.push(translate_article(index, base_px[0].get(), base_px[1].get()));
             }
             if let Some(old_pos) = self.articles.iter().position(|(n, _)| *n == index) {
                 let entry = self.articles.remove(old_pos);
@@ -304,7 +304,7 @@ impl Handler {
             }
             if let Some((_, bx)) = self.articles.iter().find(|(n, _)| *n == index) {
                 let base_px = self.base_px(bx);
-                commands.push(translate_card(index, base_px[0].get(), base_px[1].get()));
+                commands.push(translate_article(index, base_px[0].get(), base_px[1].get()));
                 if bx.has_size() {
                     let size = self.size_px(bx, base_px);
                     commands.push(size_px(index, StyleProperty::Width, size[0].get()));
@@ -376,7 +376,7 @@ impl Handler {
         let diameter = span_px[0].get().min(span_px[1].get());
         let base_px: [Px; 2] = from_fn(|d| center_px[d] - Px::new(diameter / 2.0));
         vec![
-            translate_card(DROP_ZONE_ARTICLE, base_px[0].get(), base_px[1].get()),
+            translate_article(DROP_ZONE_ARTICLE, base_px[0].get(), base_px[1].get()),
             size_px(DROP_ZONE_ARTICLE, StyleProperty::Width, diameter),
             size_px(DROP_ZONE_ARTICLE, StyleProperty::Height, diameter),
         ]
@@ -403,7 +403,7 @@ fn z_index(n: u32, z: i32) -> Command {
     style(article(n), StyleProperty::ZIndex, StyleValue::Integer(z))
 }
 
-fn translate_card(n: u32, x: f64, y: f64) -> Command {
+fn translate_article(n: u32, x: f64, y: f64) -> Command {
     style(
         article(n),
         StyleProperty::Translate,
@@ -609,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pointerdown_outside_every_card_starts_no_drag() {
+    fn a_pointerdown_outside_every_article_starts_no_drag() {
         let mut app = App::new(false, Handler::new(1000.0));
         app.clear();
         app.process(&canvas_frame(POINTER_DOWN, 4, 700.0, 500.0, 0.0));
