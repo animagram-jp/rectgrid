@@ -1,8 +1,8 @@
-use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use alloc::{rc::Rc, vec::Vec};
 use core::{
     array::from_fn,
     marker::PhantomData,
-    ops::{Add, AddAssign, Div, Mul, Sub},
+    ops::{Add, AddAssign, Deref, Div, Mul, Sub},
     primitive::{f64, u32, usize},
     result::Result,
 };
@@ -170,39 +170,59 @@ impl<const D: usize> BBox<D> {
     }
 }
 
-pub enum IncrementFunction {
+/// A pointer to a step closure `Fn(u32) -> Result<Px, RectgridError>`; implemented for every such `Deref`.
+/// The caller picks the pointer: `Rc`, `Arc<dyn Fn(..) + Send + Sync>`, `Box`, `&F`.
+pub trait StepFn {
+    fn step(&self, i: u32) -> Result<Px, RectgridError>;
+}
+
+impl<P> StepFn for P
+where
+    P: Deref,
+    P::Target: Fn(u32) -> Result<Px, RectgridError>,
+{
+    fn step(&self, i: u32) -> Result<Px, RectgridError> {
+        (**self)(i)
+    }
+}
+
+/// Pointer type used when a grid does not name one.
+pub type DefaultSteps = Rc<dyn Fn(u32) -> Result<Px, RectgridError>>;
+
+pub enum IncrementFunction<P = DefaultSteps> {
     /// Fn(i) = points[i+1] - points[i]
     /// OutOfIndex means boundary; the argument is the difference's index (integer).
     /// The closure must, when out of range, saturate to the last valid index within range and return it as OutOfIndex.
     /// The domain ends at the first Err: units beyond it are unevaluable even if f returns Ok again later,
     /// and the reported index must be that of the first Err.
-    ForwardDifference(Rc<dyn Fn(u32) -> Result<Px, RectgridError>>),
+    ForwardDifference(P),
     /// Finite domain. Array enumerating unit values of the interval from the origin in the positive direction.
     VectorList(Vec<Px>),
     /// Infinite domain.
     Scale(f64),
 }
 
-impl IncrementFunction {
+impl<P: StepFn> IncrementFunction<P> {
     /// Builds forward/inverse accumulators from the definition.
     /// forward converts fractional units to px by linear interpolation.
     /// Returns InvalidDefinition if the definition cannot be evaluated, e.g. an empty VectorList.
     ///
     /// ```
     /// extern crate alloc;
-    /// use rectgrid::{IncrementFunction, Px};
+    /// use rectgrid::{Accumulator, IncrementFunction, Px};
     ///
-    /// let acc = IncrementFunction::Scale(10.0).accumulate().unwrap();
+    /// let acc: Accumulator = IncrementFunction::Scale(10.0).accumulate().unwrap();
     /// assert_eq!(acc.forward(2.5).unwrap().get(), 25.0);
     ///
-    /// let acc = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
+    /// let acc: Accumulator = IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)]).accumulate().unwrap();
     /// assert_eq!(acc.forward(1.0).unwrap().get(), 10.0);
     /// assert_eq!(acc.forward(1.5).unwrap().get(), 20.0);
     ///
     /// use rectgrid::RectgridError;
-    /// assert!(matches!(IncrementFunction::VectorList(alloc::vec![]).accumulate(), Err(RectgridError::InvalidDefinition)));
+    /// let empty: Result<Accumulator, _> = IncrementFunction::VectorList(alloc::vec![]).accumulate();
+    /// assert!(matches!(empty, Err(RectgridError::InvalidDefinition)));
     /// ```
-    pub fn accumulate(self) -> Result<Accumulator, RectgridError> {
+    pub fn accumulate(self) -> Result<Accumulator<P>, RectgridError> {
         match self {
             Self::Scale(s) => Ok(Accumulator::Scale(s)),
             Self::VectorList(pxs) => {
@@ -211,26 +231,23 @@ impl IncrementFunction {
                 }
                 Ok(Accumulator::VectorList(pxs))
             }
-            Self::ForwardDifference(f) => {
-                let fwd = f.clone();
-                let forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>> = Box::new(move |x| {
-                    let n = libm::floor(x) as u32;
-                    let frac = x - n as f64;
-                    let mut acc = Px::new(0.0);
-                    for k in 0..n {
-                        acc += fwd(k)?;
-                    }
-                    if frac != 0.0 {
-                        acc += fwd(n)? * frac;
-                    }
-                    Ok(acc)
-                });
-                let inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>> =
-                    Box::new(move |target| forward_difference_inverse(&f, target));
-                Ok(Accumulator::ForwardDifference { forward, inverse })
-            }
+            Self::ForwardDifference(f) => Ok(Accumulator::ForwardDifference(f)),
         }
     }
+}
+
+/// Sums the first `floor(x)` steps and interpolates linearly through the next one.
+fn forward_difference_forward<P: StepFn>(f: &P, x: f64) -> Result<Px, RectgridError> {
+    let n = libm::floor(x) as u32;
+    let frac = x - n as f64;
+    let mut acc = Px::new(0.0);
+    for k in 0..n {
+        acc += f.step(k)?;
+    }
+    if frac != 0.0 {
+        acc += f.step(n)? * frac;
+    }
+    Ok(acc)
 }
 
 /// Inverts px to unit for a ForwardDifference definition.
@@ -240,10 +257,7 @@ impl IncrementFunction {
 /// Cost is one call of f per segment up to the answer; an unbounded f whose sum never reaches target
 /// is scanned up to u32::MAX segments.
 /// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
-fn forward_difference_inverse(
-    f: &Rc<dyn Fn(u32) -> Result<Px, RectgridError>>,
-    target: Px,
-) -> Result<Unit, RectgridError> {
+fn forward_difference_inverse<P: StepFn>(f: &P, target: Px) -> Result<Unit, RectgridError> {
     let target = target.get();
     if !target.is_finite() {
         return Err(RectgridError::InvalidDefinition);
@@ -254,7 +268,7 @@ fn forward_difference_inverse(
 
     let mut accumulated = 0.0;
     for k in 0..=u32::MAX {
-        let step = f(k)?.get();
+        let step = f.step(k)?.get();
         let next = accumulated + step;
         if next >= target {
             // next == target is forward(k + 1) exactly
@@ -273,16 +287,13 @@ fn forward_difference_inverse(
 }
 
 /// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
-pub enum Accumulator {
+pub enum Accumulator<P = DefaultSteps> {
     Scale(f64),
     VectorList(Vec<Px>),
-    ForwardDifference {
-        forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>>,
-        inverse: Box<dyn Fn(Px) -> Result<Unit, RectgridError>>,
-    },
+    ForwardDifference(P),
 }
 
-impl Accumulator {
+impl<P: StepFn> Accumulator<P> {
     pub fn forward(&self, x: f64) -> Result<Px, RectgridError> {
         match self {
             Self::Scale(s) => Ok(Px::new(s * x)),
@@ -297,7 +308,7 @@ impl Accumulator {
                 let hi = *pxs.get(n + 1).ok_or(RectgridError::OutOfIndex(last))?;
                 Ok(lo + (hi - lo) * frac)
             }
-            Self::ForwardDifference { forward, .. } => forward(x),
+            Self::ForwardDifference(f) => forward_difference_forward(f, x),
         }
     }
 
@@ -311,7 +322,7 @@ impl Accumulator {
                 Ok(Unit::new(if s * nearest == target.get() { nearest } else { quotient }))
             }
             Self::VectorList(pxs) => vector_list_inverse(pxs, target),
-            Self::ForwardDifference { inverse, .. } => inverse(target),
+            Self::ForwardDifference(f) => forward_difference_inverse(f, target),
         }
     }
 }
@@ -336,15 +347,15 @@ fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
 /// Rectilinear grid with an independent accumulator per axis.
 /// Px passed in from outside is global (origin not yet subtracted) and each method subtracts `origin` itself;
 /// Px derived from a boundary box (`unit_to_px` and what is built on it) is local.
-pub struct RectGrid<const D: usize> {
+pub struct RectGrid<const D: usize, P = DefaultSteps> {
     pub origin:  [Px; D],
-    accumulator: [Accumulator; D],
+    accumulator: [Accumulator<P>; D],
 }
 
-impl<const D: usize> RectGrid<D> {
+impl<const D: usize, P: StepFn> RectGrid<D, P> {
     pub fn new(
         origin: [Px; D],
-        definitions: [IncrementFunction; D],
+        definitions: [IncrementFunction<P>; D],
     ) -> Result<Self, RectgridError> {
         let accumulator: Vec<_> =
             definitions.into_iter().map(|d| d.accumulate()).collect::<Result<_, _>>()?;
@@ -366,7 +377,7 @@ impl<const D: usize> RectGrid<D> {
     /// ```
     pub fn set_definition(
         &mut self,
-        definition: IncrementFunction,
+        definition: IncrementFunction<P>,
         d: usize,
     ) -> Result<(), RectgridError> {
         self.accumulator[d] = definition.accumulate()?;
@@ -670,8 +681,8 @@ impl<const D: usize> RectGrid<D> {
 /// assert!(parameter.is_some());
 /// assert_eq!(corner, Some([Some(true), Some(true)]));
 /// ```
-pub fn corner_test<const D: usize>(
-    grid: &RectGrid<D>,
+pub fn corner_test<const D: usize, P: StepFn>(
+    grid: &RectGrid<D, P>,
     point: [Px; D],
     bx: &BBox<D>,
     threshold: f64,
@@ -729,8 +740,8 @@ pub fn corner_test<const D: usize>(
 /// assert_eq!(resized.offset()[0].get(), 3.0); // base 2.0 + offset 1.0 - new_base 0.0
 /// assert_eq!(resized.offset()[1].get(), 3.0); // y axis unchanged
 /// ```
-pub fn drag_resize<const D: usize>(
-    grid: &RectGrid<D>,
+pub fn drag_resize<const D: usize, P: StepFn>(
+    grid: &RectGrid<D, P>,
     pointer: [Px; D],
     bx: &BBox<D>,
     corner: [Option<bool>; D],
@@ -767,8 +778,8 @@ pub fn drag_resize<const D: usize>(
 /// let px = drag_translate(&grid, [Px::new(230.0), Px::new(50.0)], [Px::new(20.0), Px::new(30.0)]);
 /// assert_eq!((px[0].get(), px[1].get()), (200.0, 0.0));
 /// ```
-pub fn drag_translate<const D: usize>(
-    grid: &RectGrid<D>,
+pub fn drag_translate<const D: usize, P: StepFn>(
+    grid: &RectGrid<D, P>,
     pointer: [Px; D],
     drag_offset: [Px; D],
 ) -> [Px; D] {
@@ -793,8 +804,8 @@ pub fn drag_translate<const D: usize>(
 /// assert_eq!(snapped.base()[1].get(), 1.0);
 /// assert_eq!(snapped.offset()[0].get(), 1.0); // offset is already floored, so it stays as-is
 /// ```
-pub fn snap_bbox_to_unit<const D: usize>(
-    grid: &RectGrid<D>,
+pub fn snap_bbox_to_unit<const D: usize, P: StepFn>(
+    grid: &RectGrid<D, P>,
     pointer: [Px; D],
     drag_offset: [Px; D],
     bx: &BBox<D>,
@@ -825,8 +836,8 @@ pub fn snap_bbox_to_unit<const D: usize>(
 /// assert_eq!(snapped.base()[1].get(), 1.0);
 /// assert!(!snapped.has_size());
 /// ```
-pub fn snap_point_to_unit<const D: usize>(
-    grid: &RectGrid<D>,
+pub fn snap_point_to_unit<const D: usize, P: StepFn>(
+    grid: &RectGrid<D, P>,
     pointer: [Px; D],
     drag_offset: [Px; D],
     snap: [Unit; D],
@@ -919,16 +930,19 @@ mod tests {
 
     #[test]
     fn accumulator_scale_inverse_is_exact() {
-        let acc = IncrementFunction::Scale(200.0).accumulate().unwrap();
+        let acc = IncrementFunction::<DefaultSteps>::Scale(200.0).accumulate().unwrap();
         assert_eq!(acc.inverse(Px::new(450.0)).unwrap().get(), 2.25);
     }
 
     #[test]
     fn accumulator_vector_list_inverse_boundaries() {
-        let acc =
-            IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(10.0), Px::new(30.0)])
-                .accumulate()
-                .unwrap();
+        let acc = IncrementFunction::<DefaultSteps>::VectorList(alloc::vec![
+            Px::new(0.0),
+            Px::new(10.0),
+            Px::new(30.0)
+        ])
+        .accumulate()
+        .unwrap();
         assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
         assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 2.0);
         assert!((acc.inverse(Px::new(20.0)).unwrap().get() - 1.5).abs() < 1e-9);
@@ -1161,6 +1175,26 @@ mod tests {
         assert_eq!(calls.get(), 1001);
     }
 
+    /// The caller chooses the pointer: an `Arc<dyn Fn + Send + Sync>` makes the grid Send + Sync.
+    #[test]
+    fn arc_pointer_makes_the_grid_send_and_sync() {
+        use alloc::sync::Arc;
+
+        type SyncSteps = Arc<dyn Fn(u32) -> Result<Px, RectgridError> + Send + Sync>;
+
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RectGrid<2, SyncSteps>>();
+
+        let steps: SyncSteps = Arc::new(|k| Ok(Px::new(10.0 + k as f64)));
+        let grid: RectGrid<2, SyncSteps> = RectGrid::new(
+            [Px::new(0.0), Px::new(0.0)],
+            [IncrementFunction::ForwardDifference(steps), IncrementFunction::Scale(2.0)],
+        )
+        .unwrap();
+        assert_eq!(grid.unit_to_px(0, &Unit::new(2.0)).unwrap().get(), 21.0);
+        assert_eq!(grid.unit_to_px(1, &Unit::new(3.0)).unwrap().get(), 6.0);
+    }
+
     fn vector_list_grid(pxs: &[f64]) -> RectGrid<1> {
         RectGrid::<1>::new(
             [Px::new(0.0)],
@@ -1355,7 +1389,7 @@ mod tests {
     /// 0.3 is not forward(3) = 0.30000000000000004, so it is not snapped to 3.
     #[test]
     fn scale_inverse_off_the_grid_line_is_still_the_plain_quotient() {
-        let acc = IncrementFunction::Scale(0.1).accumulate().unwrap();
+        let acc = IncrementFunction::<DefaultSteps>::Scale(0.1).accumulate().unwrap();
         assert_eq!(acc.inverse(Px::new(0.3)).unwrap().get(), 0.3 / 0.1);
         assert_eq!(acc.inverse(Px::new(0.25)).unwrap().get(), 2.5);
     }
