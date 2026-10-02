@@ -9,7 +9,6 @@ use core::{
 
 use crate::RectgridError;
 
-/// f64 value tagged with a unit system. The tag is zero-sized and has no runtime representation.
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
 impl<Tag> Clone for Value<Tag> {
@@ -92,18 +91,13 @@ pub struct BBox<const D: usize> {
 }
 
 impl<const D: usize> BBox<D> {
-    /// Constructs a BBox. offset represents the side length (width/height/...) from base toward the
-    /// far corner. Hit-testing/parameter computations require offset to be non-negative on every axis,
-    /// so a negative axis is normalized by swapping that axis's corner: base is advanced to the far
-    /// corner and offset is negated back to non-negative. This makes the far corner reachable via drag
-    /// (e.g. dragging past the near corner) infallible; base itself is left as-is, negative or not.
+    /// offset is the side length from base toward the far corner. A negative axis is normalized by
+    /// advancing base to the far corner and negating offset, so offset is always non-negative.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
     /// let bx = BBox::new([Unit::new(0.0); 2], [Unit::new(1.0), Unit::new(3.0)]);
     /// assert!(bx.has_size());
-    ///
-    /// // a negative offset flips the corner instead of failing
     /// let flipped = BBox::new([Unit::new(0.0); 2], [Unit::new(-1.0), Unit::new(3.0)]);
     /// assert_eq!(flipped.base()[0].get(), -1.0);
     /// assert_eq!(flipped.offset()[0].get(), 1.0);
@@ -120,18 +114,15 @@ impl<const D: usize> BBox<D> {
         Self { base, offset }
     }
 
-    /// Returns base (the near corner).
     pub fn base(&self) -> Point<D> {
         self.base
     }
 
-    /// Returns offset (the side length from base toward the far corner on each axis).
     pub fn offset(&self) -> Point<D> {
         self.offset
     }
 
-    /// Floors base/offset to snap them to an integer grid.
-    /// extend applies to base only, added before flooring.
+    /// Floors base/offset to an integer grid. extend applies to base only, added before flooring.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
@@ -156,8 +147,7 @@ impl<const D: usize> BBox<D> {
         self
     }
 
-    /// Returns whether every axis of offset is nonzero (i.e., the BBox has geometric area/volume).
-    /// If any axis is 0, it is treated as a segment or point with no area, and false is returned.
+    /// Whether every axis of offset is nonzero, i.e. the BBox has area/volume.
     ///
     /// ```
     /// use rectgrid::{BBox, Unit};
@@ -182,17 +172,15 @@ pub enum IncrementFunction {
     /// The closure must, when out of range, saturate to the last valid index within range and return it as OutOfIndex.
     /// todo: verify whether a scattered distribution of OutOfIndex is acceptable
     ForwardDifference(Rc<dyn Fn(u32) -> Result<Px, RectgridError>>),
-    /// boundary
-    /// Array enumerating unit values of the interval from the origin in the positive direction.
+    /// Finite domain. Array enumerating unit values of the interval from the origin in the positive direction.
     VectorList(Vec<Px>),
-    /// unboundary
+    /// Infinite domain.
     Scale(f64),
 }
 
 impl IncrementFunction {
     /// Builds forward/inverse accumulators from the definition.
-    /// forward: unit coordinate (f64) -> px coordinate (distance relative to origin); fractional parts are converted to px by linear interpolation.
-    /// inverse: px coordinate -> unit coordinate.
+    /// forward converts fractional units to px by linear interpolation.
     /// Returns InvalidDefinition if the definition cannot be evaluated, e.g. an empty VectorList.
     ///
     /// ```
@@ -218,7 +206,6 @@ impl IncrementFunction {
                 }
                 Ok(Accumulator::VectorList(pxs))
             }
-            // the boundary shape of the closure is unknown, so the inverse scans its segments
             Self::ForwardDifference(f) => {
                 let fwd = f.clone();
                 let forward: Box<dyn Fn(f64) -> Result<Px, RectgridError>> = Box::new(move |x| {
@@ -262,7 +249,6 @@ fn forward_difference_inverse(
 
     let mut accumulated = 0.0;
     for k in 0..=u32::MAX {
-        // Err(OutOfIndex(last)): the domain ends before target, propagated as is
         let step = f(k)?.get();
         let next = accumulated + step;
         if next >= target {
@@ -282,9 +268,6 @@ fn forward_difference_inverse(
 }
 
 /// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
-/// Each variant holds only the data it needs: Scale is a bare f64 (no boxing), VectorList holds the
-/// array directly, and ForwardDifference is the only case still holding boxed closures because its
-/// inverse requires a segment scan.
 pub enum Accumulator {
     Scale(f64),
     VectorList(Vec<Px>),
@@ -295,7 +278,6 @@ pub enum Accumulator {
 }
 
 impl Accumulator {
-    /// unit coordinate (f64) -> px coordinate.
     pub fn forward(&self, x: f64) -> Result<Px, RectgridError> {
         match self {
             Self::Scale(s) => Ok(Px::new(s * x)),
@@ -329,9 +311,7 @@ impl Accumulator {
     }
 }
 
-/// Inverse for VectorList: pxs is known to be non-empty and monotonically non-decreasing, so unlike
-/// ForwardDifference this needs no range-widening, just a partition_point over the array followed by
-/// an O(1) linear-interpolation solve within the located segment.
+/// Inverse for VectorList: `partition_point` over the (non-empty, non-decreasing) array, then a linear solve in the located segment.
 fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
     let last = (pxs.len() - 1) as u32;
     let t = target.get();
@@ -348,9 +328,11 @@ fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
     Ok(Unit::new(n as f64 + frac))
 }
 
+/// Rectilinear grid with an independent accumulator per axis.
+/// Px passed in from outside is global (origin not yet subtracted) and each method subtracts `origin` itself;
+/// Px derived from a box (`unit_to_px` and what is built on it) is local.
 pub struct RectGrid<const D: usize> {
     pub origin:  [Px; D],
-    /// f([Unit; D]) -> f([Px; D])
     accumulator: [Accumulator; D],
 }
 
@@ -368,7 +350,7 @@ impl<const D: usize> RectGrid<D> {
         Ok(Self { origin, accumulator })
     }
 
-    /// Replaces the definition for axis d. Subsequent calls to unit_to_px/point_to_unit etc. evaluate against this new definition.
+    /// Replaces the definition for axis d.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
@@ -386,11 +368,9 @@ impl<const D: usize> RectGrid<D> {
         Ok(())
     }
 
-    /// Inverts px to unit. Scale/VectorList resolve analytically or via array search; ForwardDifference
-    /// scans its segments (see forward_difference_inverse).
-    /// point may be passed as-is as an external px coordinate (e.g. viewport); it is corrected to a local coordinate by subtracting origin before conversion.
-    /// Caller contract: each axis's accumulator must be monotonically non-decreasing over Unit >= 0.
-    /// If it is not (e.g. a negative value given to Scale, or ForwardDifference returning a decreasing difference), the result is not guaranteed.
+    /// Inverts px to unit.
+    /// Caller contract: each axis's accumulator must be monotonically non-decreasing over Unit >= 0
+    /// (e.g. not a negative Scale or a decreasing difference); otherwise the result is not guaranteed.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px};
@@ -406,7 +386,7 @@ impl<const D: usize> RectGrid<D> {
         self.accumulator[i].inverse(target)
     }
 
-    /// Converts a unit coordinate to px (evaluates the accumulator directly). unit must be an absolute value from the origin.
+    /// Converts a unit coordinate to px. unit must be an absolute value from the origin.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
@@ -450,14 +430,10 @@ impl<const D: usize> RectGrid<D> {
         }
     }
 
-    /// Determines per axis whether point is contained in boxes[i] (extend included).
-    /// point may be passed as-is in viewport coordinates (origin is subtracted internally).
-    /// extend is added to base/offset in unit space before conversion to px
-    /// (if converted to px individually and added afterward, the width would drift depending on boundary position for a nonlinear accumulator).
     /// Returns None when the box is not evaluable (some axis of box_as_px is Err): it is never hit.
-    /// An extend edge past the end of a finite domain is clipped there (see unit_to_px_clipped).
-    /// Otherwise returns: (whether it hit, base_px without extend, offset_px without extend).
-    /// base_px/offset_px are returned alongside the hit test so they can be reused directly for parameter calculation.
+    /// Otherwise (whether it hit, base_px without extend, offset_px without extend), the px reusable for the parameter.
+    /// extend is added in unit space before conversion to px, so the width does not drift under a nonlinear accumulator;
+    /// an edge past the end of a finite domain is clipped there (see unit_to_px_clipped).
     fn contains(
         &self,
         point: [Px; D],
@@ -483,14 +459,10 @@ impl<const D: usize> RectGrid<D> {
         Some((hit, base_px, offset_px))
     }
 
-    /// `ξ_d = (point_d − base_d) / offset_d`
-    /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
-    /// base_px/offset_px are the px-converted values of the unit coordinates base/base+offset (same shape as contains' return value).
     fn parameter_from_px(point: [Px; D], base_px: [Px; D], offset_px: [Px; D]) -> [Parameter; D] {
         from_fn(|d| Self::parameter_axis(point[d], base_px[d], offset_px[d]))
     }
 
-    /// One axis of parameter_from_px: `(point - base) / (far - base)`, 0.0 for a zero-width axis.
     fn parameter_axis(point: Px, base_px: Px, far_px: Px) -> Parameter {
         let width = far_px - base_px;
         if width.get() == 0.0 {
@@ -500,8 +472,7 @@ impl<const D: usize> RectGrid<D> {
         }
     }
 
-    /// Returns the highest index among the boxes that point hits (a higher index in boxes is treated as higher priority).
-    /// When multiple boxes hit, the higher index wins, so the scan runs from the tail.
+    /// Returns the highest index among the boxes that point hits (a higher index has higher priority).
     /// A box that is not evaluable (some axis of box_as_px is Err) is never hit; an extend past a finite domain end is clipped there.
     ///
     /// ```
@@ -529,8 +500,7 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// Like hit_test, returns the highest-index hit, and additionally the get_parameter-equivalent value for the hit box.
-    /// parameter is unaffected by extend; it is a ratio relative to the box interior (base side = 0.0, offset side = 1.0).
+    /// Like hit_test, with the get_parameter value of the hit box. The parameter is unaffected by extend.
     ///
     /// ```
     /// extern crate alloc;
@@ -558,8 +528,7 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// Scans all boxes point hits, returning hit/no-hit for each, in a Vec the same length as boxes.
-    /// A box that is not evaluable is reported as no-hit (see hit_test).
+    /// Hit/no-hit per box, in order. A box that is not evaluable is no-hit (see hit_test).
     ///
     /// ```
     /// extern crate alloc;
@@ -586,9 +555,7 @@ impl<const D: usize> RectGrid<D> {
             .collect()
     }
 
-    /// `ξ_d = (point_d − base_d) / offset_d`
-    /// Signed local coordinate (parameter) for a single box, with each side length (offset) normalized to 1.
-    /// point may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
+    /// `ξ_d = (point_d − base_d) / offset_d`, evaluated in px.
     /// Each axis is evaluated independently and gives its own `Result`: an axis whose base or base + offset
     /// cannot be evaluated is Err (OutOfIndex(last) carries the last valid unit, enough to clamp with unit_to_px).
     /// Non-finite inputs are not checked and give a NaN or infinite parameter inside Ok.
@@ -619,9 +586,8 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// Converts multiple BBox to (base_px, offset_px) per axis. offset_px is the actual side length accounting for base position
-    /// (unit_to_px(base+offset) - unit_to_px(base)), which stays correct for base position even under a nonlinear
-    /// accumulator (ForwardDifference/VectorList). Each axis is evaluated independently: a box gives one `Result` per axis
+    /// Converts multiple BBox to (base_px, offset_px) per axis, with offset_px = unit_to_px(base+offset) - unit_to_px(base)
+    /// (correct under a nonlinear accumulator). Each axis is evaluated independently: a box gives one `Result` per axis
     /// (Err, e.g. OutOfIndex(last), for an unevaluable axis).
     ///
     /// ```
@@ -647,10 +613,8 @@ impl<const D: usize> RectGrid<D> {
             .collect()
     }
 
-    /// Returns pointer's local coordinate (after origin correction) with z subtracted.
-    /// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
-    /// At drag start, passing base_px (the element's reference position) as z yields the drag offset;
-    /// during drag, passing that offset as z yields the element's current reference position.
+    /// Returns pointer's local coordinate with z subtracted. At drag start, z = base_px yields the drag offset;
+    /// during drag, z = that offset yields the element's current reference position.
     ///
     /// ```
     /// use rectgrid::{RectGrid, IncrementFunction, Px};
@@ -666,27 +630,13 @@ impl<const D: usize> RectGrid<D> {
     }
 }
 
-// ============================================================
-// pointer / drag interaction (stateless helpers)
-//
-// Stateless pure functions depending only on RectGrid<D> and BBox<D>.
-// All of them require only &RectGrid (RectGrid's accumulator is already built at new() time, so no
-// internal state needs to change per call).
-// Because BBox always keeps base/offset in Unit and cannot represent a mixed Px/Unit intermediate
-// state, the px position during drag is never written back into BBox — it is only returned as a
-// value. The caller holds onto px during the drag and finalizes it into BBox (Unit) via a snap_*
-// function at the DragEnd-equivalent moment.
-// ============================================================
-
 /// For a BBox with area, determines per axis whether point is near an edge (within threshold).
-/// Returns a pair of (each axis's parameter, if obtainable) and the corner test result.
-/// Each element of the corner result: Some(true) = near the base-side edge ([0, threshold]), Some(false) = near the offset-side edge ([1-threshold, 1]), None = not applicable.
-/// If at least one axis is Some, it is treated as a handle hit (all axes Some = corner, only one axis Some = edge).
-/// If all axes are None, returns None to signal no handle (the caller should fall back to e.g. a move drag).
-/// extend (in the same Unit space as hit_test's extend) is converted to a parameter-space margin per axis
-/// (extend / offset) and added to the inside range, so a point within hit_test's extended hit area is not
-/// spuriously rejected as outside bx.
-/// parameter is None when the box lacks size (has_size is false) or point is outside bx (extend included).
+/// Returns (each axis's parameter, corner result). A corner element is Some(true) near the base-side edge
+/// ([0, threshold]), Some(false) near the offset-side edge ([1 - threshold, 1]) and None otherwise.
+/// If any axis is Some it is a handle hit (all axes Some = corner, one = edge); all None returns None
+/// (the caller falls back to e.g. a move drag).
+/// extend (as in hit_test) is converted to a parameter-space margin per axis (extend / offset).
+/// parameter is None when the box has no size, an axis is unevaluable, or point is outside bx (extend included).
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
@@ -725,7 +675,6 @@ pub fn corner_test<const D: usize>(
     if !bx.has_size() {
         return (None, None);
     }
-    // an unevaluable axis leaves no parameter to test
     let mut parameter = [Parameter::new(0.0); D];
     for (axis, result) in grid.get_parameter(point, *bx).into_iter().enumerate() {
         match result {
@@ -759,9 +708,8 @@ pub fn corner_test<const D: usize>(
     (Some(parameter), corner)
 }
 
-/// During drag, updates BBox's base/offset via a corner-handle drag and returns the updated BBox.
-/// corner[d] = Some(base_side): if base_side == true, moves the base-side edge; if false, the offset-side edge.
-/// The new offset is guaranteed to be at least 1.0 unit (so base/offset never cross).
+/// Updates BBox's base/offset via a corner-handle drag. corner[d] = Some(base_side): true moves the
+/// base-side edge, false the offset-side edge. The new offset is at least 1.0 unit (base/offset never cross).
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, drag_resize};
@@ -802,10 +750,8 @@ pub fn drag_resize<const D: usize>(
     Ok(resized)
 }
 
-/// During drag, computes base's px position for a move drag (as opposed to a corner-handle drag).
-/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally.
-/// Because BBox always keeps base in Unit, the px position during drag is only returned here without
-/// updating BBox; it is committed to BBox via snap_region_to_unit at the DragEnd-equivalent moment.
+/// Computes base's px position during a move drag. BBox keeps base in Unit, so the px position is only
+/// returned; it is committed to BBox by snap_region_to_unit (or snap_point_to_unit) at drag end.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, drag_translate};
@@ -824,9 +770,8 @@ pub fn drag_translate<const D: usize>(
     grid.offset(pointer, drag_offset)
 }
 
-/// At DragEnd, snaps the move-drag result of a BBox with area to the Unit grid and returns the updated BBox (base).
-/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally. drag_offset must be the same value passed to drag_translate.
-/// extend is added to the unit-converted value before flooring.
+/// At drag end, snaps the move-drag result of a BBox with area to the Unit grid and returns the updated BBox.
+/// drag_offset must be the value passed to drag_translate. extend is added before flooring.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, snap_region_to_unit};
@@ -859,8 +804,8 @@ pub fn snap_region_to_unit<const D: usize>(
     Ok(snapped)
 }
 
-/// At DragEnd, computes a BBox snapped to the Unit grid from the move-drag result of a point BBox (no area).
-/// pointer may be passed as-is as an external px coordinate (e.g. viewport); origin is subtracted internally. drag_offset must be the same value passed to drag_translate.
+/// At drag end, computes a BBox snapped to the Unit grid from the move-drag result of a point BBox (no area).
+/// drag_offset must be the value passed to drag_translate.
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit, snap_point_to_unit};
@@ -957,10 +902,9 @@ mod tests {
         assert!((y - 0.46875).abs() < 1e-6, "y = {}", y);
     }
 
-    // ForwardDifference is the only variant not covered by the doctests or the unit tests above.
+    /// f(i) = (i+1)*10, so forward(2.5) = 10 + 20 + 0.5 * 30.
     #[test]
     fn accumulate_forward_difference() {
-        // f(i) = (i+1)*10 -> accumulated at x=2.5: 10+20+0.5*30 = 45
         let f =
             IncrementFunction::ForwardDifference(Rc::new(|i| Ok(Px::new((i + 1) as f64 * 10.0))));
         let acc = f.accumulate().unwrap();
@@ -1060,6 +1004,7 @@ mod tests {
         );
     }
 
+    /// Dragging the offset-side edge to 900px (unit 4.5, floored to 4) gives offset 4 - 2 with base unchanged.
     #[test]
     fn drag_resize_offset_side() {
         let grid = RectGrid::<2>::new(
@@ -1071,13 +1016,13 @@ mod tests {
             base:   [Unit::new(2.0), Unit::new(0.0)],
             offset: [Unit::new(1.0), Unit::new(3.0)],
         };
-        // Drag the offset-side (right) edge to 900px (unit 4.5 -> floor=4): offset = 4 - 2 = 2, base unchanged.
         let resized =
             drag_resize(&grid, [Px::new(900.0), Px::new(0.0)], &bx, [Some(false), None]).unwrap();
         assert_eq!(resized.base[0].get(), 2.0);
         assert_eq!(resized.offset[0].get(), 2.0);
     }
 
+    /// Dragging the base side past the far edge (unit 5.5) clamps base below it and offset to the minimum of 1.0.
     #[test]
     fn drag_resize_minimum_clamp() {
         let grid = RectGrid::<2>::new(
@@ -1089,8 +1034,6 @@ mod tests {
             base:   [Unit::new(2.0), Unit::new(0.0)],
             offset: [Unit::new(2.0), Unit::new(3.0)],
         };
-        // Drag the base side past the far edge (unit 4.0) to unit 5.5 (=1100px): base clamps so it
-        // cannot cross the far edge, and offset clamps to a minimum of 1.0.
         let resized =
             drag_resize(&grid, [Px::new(1100.0), Px::new(0.0)], &bx, [Some(true), None]).unwrap();
         assert_eq!(resized.base[0].get(), 3.0);
@@ -1172,17 +1115,17 @@ mod tests {
         assert_eq!(acc.inverse(Px::new(-5.0)).unwrap().get(), 0.0);
     }
 
+    /// Steps 10, 0, 10: px 10 is reached at unit 1 and held until unit 2; the inverse returns the start of the plateau.
     #[test]
     fn forward_difference_inverse_zero_step_returns_start_of_plateau() {
-        // steps 10, 0, 10: px 10 is reached at unit 1 and held until unit 2
         let acc = accumulator(Rc::new(|k| Ok(Px::new(if k == 1 { 0.0 } else { 10.0 }))));
         assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
         assert_eq!(acc.inverse(Px::new(15.0)).unwrap().get(), 2.5);
     }
 
+    /// Three steps of 10 (domain 0..=3); the closure reports OutOfIndex(3) past the end.
     #[test]
     fn forward_difference_inverse_finite_domain_boundaries() {
-        // three steps of 10 (domain 0..=3); the closure reports OutOfIndex(3) past the end
         let acc = accumulator(Rc::new(|k| {
             if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
         }));
@@ -1191,9 +1134,9 @@ mod tests {
         assert!(matches!(acc.inverse(Px::new(30.5)), Err(RectgridError::OutOfIndex(3))));
     }
 
+    /// A non-finite target is rejected (an unbounded closure would be scanned for u32::MAX segments).
     #[test]
     fn forward_difference_inverse_rejects_non_finite_targets() {
-        // an unbounded closure would otherwise be scanned for u32::MAX segments
         let acc = accumulator(Rc::new(|_| Ok(Px::new(1.0))));
         for target in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(matches!(acc.inverse(Px::new(target)), Err(RectgridError::InvalidDefinition)));
@@ -1225,9 +1168,9 @@ mod tests {
         BBox::new([Unit::new(base)], [Unit::new(offset)])
     }
 
+    /// VectorList [0, 10] has the domain units 0..=1; a box at units 5..6 is never hit.
     #[test]
     fn hit_test_box_beyond_finite_domain_never_hits() {
-        // VectorList [0, 10]: the domain is units 0..=1, this box is at units 5..6
         let grid = vector_list_grid(&[0.0, 10.0]);
         let boxes = alloc::vec![unit_box(5.0, 1.0)];
         for px in [-1.0, 0.0, 5.0, 10.0, 50.0] {
@@ -1235,15 +1178,14 @@ mod tests {
             assert_eq!(grid.hit_tests([Px::new(px)], &boxes, None), alloc::vec![false], "px {px}");
             assert!(grid.hit_test_with_parameter([Px::new(px)], &boxes, None).is_none(), "px {px}");
         }
-        // an in-domain box in the same list is found
         let boxes = alloc::vec![unit_box(0.0, 1.0), unit_box(5.0, 1.0)];
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), Some(0));
         assert_eq!(grid.hit_tests([Px::new(5.0)], &boxes, None), alloc::vec![true, false]);
     }
 
+    /// Base inside the domain and base + offset beyond it: box_as_px reports Err on that axis.
     #[test]
     fn hit_test_box_straddling_the_domain_end_is_not_evaluable() {
-        // base inside the domain, base + offset beyond it: box_as_px reports Err on that axis
         let grid = vector_list_grid(&[0.0, 10.0]);
         let boxes = alloc::vec![unit_box(0.5, 1.0)];
         assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(RectgridError::OutOfIndex(1))));
@@ -1271,30 +1213,27 @@ mod tests {
         }
     }
 
+    /// The box is the last cell (px 10..30) of VectorList [0, 10, 30] and extend reaches past the domain end: it is clipped there. The parameter is relative to the box, not to extend.
     #[test]
     fn hit_test_extend_is_clipped_at_the_domain_end() {
-        // VectorList [0, 10, 30]: the box is the last cell (px 10..30) and extend reaches past the domain end
         let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
         let boxes = alloc::vec![unit_box(1.0, 1.0)];
         let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
         assert_eq!(grid.hit_test([Px::new(20.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(30.0)], &boxes, extend), Some(0));
-        // clipped at the grid end; nothing before the box's own base
         assert_eq!(grid.hit_test([Px::new(30.5)], &boxes, extend), None);
         assert_eq!(grid.hit_test([Px::new(9.0)], &boxes, extend), None);
-        // extend on the base side
         let extend = Some(([Unit::new(-0.5)], [Unit::new(0.0)]));
         assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(4.0)], &boxes, extend), None);
-        // the parameter is relative to the box, not to extend
         let extend = Some(([Unit::new(0.0)], [Unit::new(5.0)]));
         let (_, parameter) = grid.hit_test_with_parameter([Px::new(20.0)], &boxes, extend).unwrap();
         assert_eq!(parameter[0].get(), 0.5);
     }
 
+    /// Three steps of 10 (domain 0..=3); extend is clipped at the domain end and a box starting beyond it is not evaluable.
     #[test]
     fn hit_test_extend_is_clipped_for_forward_difference_domains() {
-        // three steps of 10 (domain units 0..=3); the closure reports OutOfIndex(3) past the end
         let grid = RectGrid::<1>::new(
             [Px::new(0.0)],
             [IncrementFunction::ForwardDifference(Rc::new(|k| {
@@ -1307,7 +1246,6 @@ mod tests {
         assert_eq!(grid.hit_test([Px::new(25.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(30.0)], &boxes, extend), Some(0));
         assert_eq!(grid.hit_test([Px::new(31.0)], &boxes, extend), None);
-        // a box that starts beyond the domain end is not evaluable
         assert_eq!(grid.hit_test([Px::new(0.0)], &alloc::vec![unit_box(4.0, 1.0)], None), None);
     }
 
@@ -1333,6 +1271,7 @@ mod tests {
         assert_eq!(grid.hit_test([Px::new(50.0), Px::new(5.0)], &inside, None), Some(0));
     }
 
+    /// Only OutOfIndex is clipped at a domain end: other evaluation errors make the box unevaluable.
     #[test]
     fn hit_test_other_evaluation_errors_also_mean_not_evaluable() {
         let grid = RectGrid::<1>::new(
@@ -1348,7 +1287,6 @@ mod tests {
             grid.get_parameter([Px::new(0.0)], boxes[0])[0],
             Err(RectgridError::InvalidDefinition)
         ));
-        // only OutOfIndex is clipped
         let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
     }
@@ -1409,9 +1347,9 @@ mod tests {
         );
     }
 
+    /// 0.3 is not forward(3) = 0.30000000000000004, so it is not snapped to 3.
     #[test]
     fn scale_inverse_off_the_grid_line_is_still_the_plain_quotient() {
-        // 0.3 is not forward(3) = 0.30000000000000004, so it is not snapped to 3
         let acc = IncrementFunction::Scale(0.1).accumulate().unwrap();
         assert_eq!(acc.inverse(Px::new(0.3)).unwrap().get(), 0.3 / 0.1);
         assert_eq!(acc.inverse(Px::new(0.25)).unwrap().get(), 2.5);
@@ -1452,9 +1390,9 @@ mod tests {
         assert_eq!(grid.unit_to_px(0, &Unit::new(last as f64)).unwrap().get(), 30.0);
     }
 
+    /// Axis 0 would be inside the box but axis 1 lies beyond its finite domain: nothing is reported.
     #[test]
     fn corner_test_reports_nothing_when_any_axis_cannot_be_evaluated() {
-        // axis 0 would be inside the box; axis 1 lies beyond its finite domain
         let grid = RectGrid::<2>::new(
             [Px::new(0.0), Px::new(0.0)],
             [
@@ -1467,7 +1405,6 @@ mod tests {
         let (parameter, corner) =
             corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &beyond, 0.1, None);
         assert!(parameter.is_none() && corner.is_none());
-        // an evaluable box gives a parameter
         let inside = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
         let (parameter, _) = corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &inside, 0.1, None);
         assert!(parameter.is_some());

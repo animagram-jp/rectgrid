@@ -1,5 +1,3 @@
-// This file includes untranslated text (ja).
-
 use alloc::vec::Vec;
 use core::primitive::{f64, usize};
 
@@ -185,7 +183,6 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     let rx = rx.abs();
     let ry = ry.abs();
 
-    // reduce to the first quadrant with the semi-major axis first (e0 >= e1), then undo
     let swap = ry > rx;
     let (e0, e1) = if swap { (ry, rx) } else { (rx, ry) };
     let (y0, y1) = if swap { (raw_dy.abs(), raw_dx.abs()) } else { (raw_dx.abs(), raw_dy.abs()) };
@@ -426,7 +423,6 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
     };
 
     let outside = if best_t > 0.0 && best_t < 1.0 {
-        // right of the edge: outside for a counter-clockwise polygon
         vx * (py - y1) - vy * (px - x1) < 0.0
     } else {
         let (vertex_index, previous_edge, next_edge) = if best_t <= 0.0 {
@@ -660,9 +656,9 @@ mod tests {
         if clockwise { -outside_positive } else { outside_positive }
     }
 
+    /// In 3-4-5 triangles the nearest boundary point is the vertex, not the edge's line.
     #[test]
     fn as_on_polygon_nearest_convex_vertex_gives_euclidean_distance() {
-        // 3-4-5 triangles: the nearest point is the vertex
         let (result, edge) = as_on_polygon(p(13.0, 14.0), square());
         assert_eq!(result.signed_distance.get(), 5.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (10.0, 10.0));
@@ -684,9 +680,9 @@ mod tests {
         assert_eq!(edge, 1);
     }
 
+    /// (3, 3) is inside the L and its nearest boundary point is the reflex vertex (4, 4).
     #[test]
     fn as_on_polygon_reflex_vertex_inside_is_negative_with_euclidean_distance() {
-        // (3, 3) is inside the L; its nearest boundary point is the reflex vertex (4, 4).
         let (result, edge) = as_on_polygon(p(3.0, 3.0), l_shape());
         assert!(close(result.signed_distance.get(), -core::f64::consts::SQRT_2, 1e-15));
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (4.0, 4.0));
@@ -753,9 +749,9 @@ mod tests {
         }
     }
 
+    /// Around tips (acute convex) and valleys (obtuse reflex) the sign must come from the pseudo-normal.
     #[test]
     fn as_on_polygon_star_points_around_every_vertex_match_oracle() {
-        // tips (acute convex) and valleys (obtuse reflex): the sign must come from the pseudo-normal
         for clockwise in [false, true] {
             let polygon = star(clockwise);
             for vertex in &polygon.vertices {
@@ -784,9 +780,9 @@ mod tests {
         }
     }
 
+    /// A repeated vertex gives a zero-length edge that must not drop a neighbour from the sign; a collinear vertex changes nothing.
     #[test]
     fn as_on_polygon_duplicate_and_collinear_vertices() {
-        // a repeated vertex gives a zero-length edge: it must not drop a neighbour from the sign
         let repeated = || Polygon {
             vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
         };
@@ -794,7 +790,6 @@ mod tests {
         assert_eq!(as_on_polygon(p(13.0, -4.0), repeated()).0.signed_distance.get(), 5.0);
         assert_eq!(as_on_polygon(p(9.0, 1.0), repeated()).0.signed_distance.get(), -1.0);
 
-        // a collinear vertex in the middle of an edge changes nothing
         let collinear = || Polygon {
             vertices: vec![p(0.0, 0.0), p(5.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
         };
@@ -805,9 +800,9 @@ mod tests {
         assert_eq!(as_on_polygon(p(13.0, 14.0), collinear()).0.signed_distance.get(), 5.0);
     }
 
+    /// Polygon and query both move by 1e8; the tolerance 1e-6 covers the input grid ulp(1e8) = 1.5e-8.
     #[test]
     fn as_on_polygon_is_stable_under_translation() {
-        // both the polygon and the query move by 1e8; distances are formed from differences
         let offset = 1e8;
         let moved = Polygon {
             vertices: star(false)
@@ -827,12 +822,11 @@ mod tests {
             .0
             .signed_distance
             .get();
-            // inputs are quantised to ulp(1e8) = 1.5e-8
             assert!((actual - expected).abs() < 1e-6, "q={q:?}: {actual} vs {expected}");
         }
     }
 
-    // (name, rx, ry, dx, dy, signed distance, closest point relative to the center)
+    /// (name, rx, ry, dx, dy, signed distance, closest point relative to the center)
     const ELLIPSE_CASES: [(&str, f64, f64, f64, f64, f64, (f64, f64)); 39] = [
         (
             "4x1 (3,2)",
@@ -1115,13 +1109,13 @@ mod tests {
         ),
     ];
 
+    /// The tolerance is a few ulp of the largest magnitude involved.
     #[test]
     fn as_on_ellipse_matches_high_precision_reference() {
         for (name, rx, ry, dx, dy, signed, foot) in ELLIPSE_CASES {
             let ellipse =
                 Ellipse { center: p(0.0, 0.0), rx: Unit::new(rx), ry: Unit::new(ry) };
             let result = as_on_ellipse(p(dx, dy), ellipse);
-            // error floor of any double implementation: a few ulp of the largest magnitude involved
             let magnitude = rx.max(ry).max(dx.abs()).max(dy.abs());
             let tolerance = 1e-14 * magnitude;
             let got = result.signed_distance.get();
@@ -1143,7 +1137,6 @@ mod tests {
 
     #[test]
     fn as_on_ellipse_non_finite_inputs_terminate() {
-        // no hang and no panic: the iteration count is bounded for any input
         let ellipse =
             || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
         for (x, y) in [(f64::NAN, 1.0), (1.0, f64::NAN), (f64::INFINITY, 1.0), (1.0, f64::INFINITY)]
@@ -1152,20 +1145,20 @@ mod tests {
         }
     }
 
+    /// (2, sqrt(3/4)) = (4 cos(pi/3), sin(pi/3)) is on the 4x1 ellipse up to rounding of the inputs.
     #[test]
     fn as_on_ellipse_points_on_the_ellipse_are_zero() {
         let ellipse =
             || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
         assert_eq!(as_on_ellipse(p(4.0, 0.0), ellipse()).signed_distance.get(), 0.0);
         assert_eq!(as_on_ellipse(p(0.0, 1.0), ellipse()).signed_distance.get(), 0.0);
-        // (4 cos(pi/3), sin(pi/3)) is on the ellipse up to rounding of the inputs
         let on = as_on_ellipse(p(2.0, libm::sqrt(0.75)), ellipse());
         assert!(on.signed_distance.get().abs() < 1e-15, "{}", on.signed_distance.get());
     }
 
+    /// The foot lies on the ellipse, query - foot is normal there, and no sampled ellipse point is closer.
     #[test]
     fn as_on_ellipse_closest_point_is_the_foot_of_the_normal() {
-        // the foot lies on the ellipse, query - foot is normal there, and no sampled ellipse point is closer
         for (rx, ry) in [(4.0, 1.0), (1.0, 4.0), (3.0, 3.0), (100.0, 0.01), (7.0, 6.9)] {
             for ix in -12..=12 {
                 for iy in -12..=12 {
@@ -1255,13 +1248,12 @@ mod tests {
                 }
             }
         }
-        // the bound of 19 evaluations is approached only in the extreme corners
         assert!(cases > 10_000 && worst >= 10, "cases {cases}, worst {worst}");
     }
 
+    /// On the (2, 1) ellipse the evolute cusp is at y0 = (e0² - e1²) / e0 = 1.5.
     #[test]
     fn ellipse_root_exact_cusp_with_tiny_y_stays_within_bound() {
-        // (2, 1): the evolute cusp is at y0 = (e0² - e1²) / e0 = 1.5
         let (e0, e1, delta) = (2.0, 1.0, 3.0);
         for y1 in [1e-300, 1e-200, 1e-100, 1e-30, 1e-8] {
             let (_, count) = ellipse_root_counted(e0, e1, delta, 1.5, y1);
@@ -1269,9 +1261,9 @@ mod tests {
         }
     }
 
+    /// A unit right triangle translated far from the origin keeps center (+0.5, +0.5) and radius sqrt(1/2).
     #[test]
     fn from_three_points_far_from_origin_keeps_precision() {
-        // a unit right triangle translated far from the origin: center (+0.5, +0.5), radius sqrt(1/2)
         for offset in [1e6, 1e9, 1e12] {
             let c = Circle::from_three_points(
                 p(offset, offset),
@@ -1285,9 +1277,9 @@ mod tests {
         }
     }
 
+    /// The triangle (0,0), (4,0), (1,3) has center (2,1) and radius sqrt(5) at every scale.
     #[test]
     fn from_three_points_is_scale_invariant() {
-        // (0,0), (4,0), (1,3): center (2,1), radius sqrt(5)
         for scale in [1e-9, 1e-5, 1.0, 1e5, 1e9] {
             let c = Circle::from_three_points(
                 p(0.0, 0.0),
@@ -1300,7 +1292,6 @@ mod tests {
             assert!(close(c.radius.get() / scale, libm::sqrt(5.0), 1e-14), "scale {scale}");
         }
 
-        // radius ~7e-6
         let tiny = Circle::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5)).unwrap();
         assert!(close(tiny.center[0].get() / 5e-6, 1.0, 1e-14));
         assert!(close(tiny.radius.get() / 7.0710678118654755e-6, 1.0, 1e-14));
@@ -1353,9 +1344,9 @@ mod tests {
         assert!(checked > 1000, "checked {checked}");
     }
 
+    /// cross / longest² = 2.5e-7 is far above the relative threshold, so a circle of radius ~1e6 is returned.
     #[test]
     fn from_three_points_nearly_collinear_but_valid() {
-        // cross / longest² = 2.5e-7: far above the relative threshold, radius ~ 1e6
         let c = Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(2.0, 1e-6)).unwrap();
         assert!(close(c.center[0].get(), 0.5, 1e-9));
         assert!(close(c.radius.get() / 1e6, 1.0, 1e-5), "{}", c.radius.get());
@@ -1365,12 +1356,11 @@ mod tests {
         }
     }
 
+    /// With apex height h over a unit base, cross / longest² = h and the threshold is 1e-12; the decision is scale-invariant.
     #[test]
     fn from_three_points_collinearity_threshold_is_relative_to_the_longest_side() {
-        // apex height h over a unit base: cross / longest² = h, threshold 1e-12
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 0.9e-12)).is_none());
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 1.1e-12)).is_some());
-        // the same shapes at another scale decide identically
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 0.9e-3)).is_none());
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 1.1e-3)).is_some());
     }
@@ -1381,9 +1371,9 @@ mod tests {
         assert!(Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).is_none());
     }
 
+    /// With v = (3, 4) and |v| = 5: w = (1, 0) gives cross -4 (-0.8), w = (7, 2) gives -4.4, w = (-1, 2) gives +2, at every offset.
     #[test]
     fn as_on_line_distance_is_exact_for_integer_geometry_at_any_offset() {
-        // v = (3, 4), |v| = 5: w = (1, 0) gives cross = -4 -> -0.8, w = (7, 2) -> -4.4, w = (-1, 2) -> +2
         for offset in [0.0, 1e6, 1e9, 1e12] {
             let line = || Line { start: p(offset, offset), end: p(offset + 3.0, offset + 4.0) };
             let at = |wx: f64, wy: f64| as_on_line(p(offset + wx, offset + wy), line());
@@ -1416,7 +1406,6 @@ mod tests {
                     (d * d * length_squared - cross * cross).abs() <= 1e-15 * cross * cross,
                     "offset {offset} v=({vx},{vy}) w=({wx},{wy}): d = {d}"
                 );
-                // sign: negative on the right-hand side
                 assert_eq!(d < 0.0, cross < 0.0, "offset {offset} v=({vx},{vy}) w=({wx},{wy})");
             }
         }
