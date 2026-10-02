@@ -416,7 +416,7 @@ impl<const D: usize> RectGrid<D> {
     /// assert_eq!(px[1][0].as_ref().unwrap().get(), 200.0);
     /// assert!(matches!(px[1][1], Err(RectgridError::OutOfIndex(1))));
     /// ```
-    pub fn point_as_px(&self, points: &Vec<Point<D>>) -> Vec<[Result<Px, RectgridError>; D]> {
+    pub fn point_as_px(&self, points: &[Point<D>]) -> Vec<[Result<Px, RectgridError>; D]> {
         points.iter().map(|pt| from_fn(|d| self.unit_to_px(d, &pt[d]))).collect()
     }
 
@@ -490,7 +490,7 @@ impl<const D: usize> RectGrid<D> {
     pub fn hit_test(
         &self,
         point: [Px; D],
-        boxes: &Vec<BBox<D>>,
+        boxes: &[BBox<D>],
         extend: Option<([Unit; D], [Unit; D])>,
     ) -> Option<usize> {
         boxes.iter().enumerate().rev().find_map(|(i, bx)| {
@@ -516,7 +516,7 @@ impl<const D: usize> RectGrid<D> {
     pub fn hit_test_with_parameter(
         &self,
         point: [Px; D],
-        boxes: &Vec<BBox<D>>,
+        boxes: &[BBox<D>],
         extend: Option<([Unit; D], [Unit; D])>,
     ) -> Option<(usize, [Parameter; D])> {
         let local: [Px; D] = from_fn(|d| point[d] - self.origin[d]);
@@ -544,7 +544,7 @@ impl<const D: usize> RectGrid<D> {
     pub fn hit_tests(
         &self,
         point: [Px; D],
-        boxes: &Vec<BBox<D>>,
+        boxes: &[BBox<D>],
         extend: Option<([Unit; D], [Unit; D])>,
     ) -> Vec<bool> {
         boxes
@@ -598,7 +598,7 @@ impl<const D: usize> RectGrid<D> {
     /// assert_eq!(base_px.get(), 100.0);
     /// assert_eq!(offset_px.get(), 200.0);
     /// ```
-    pub fn box_as_px(&self, boxes: &Vec<BBox<D>>) -> Vec<[Result<(Px, Px), RectgridError>; D]> {
+    pub fn box_as_px(&self, boxes: &[BBox<D>]) -> Vec<[Result<(Px, Px), RectgridError>; D]> {
         boxes
             .iter()
             .map(|bx| {
@@ -1406,5 +1406,16 @@ mod tests {
         let inside = BBox::new([Unit::new(0.0), Unit::new(0.0)], [Unit::new(1.0), Unit::new(1.0)]);
         let (parameter, _) = corner_test(&grid, [Px::new(50.0), Px::new(5.0)], &inside, 0.1, None);
         assert!(parameter.is_some());
+    }
+
+    /// The boundary box and point lists are taken as slices: arrays and sub-slices need no Vec.
+    #[test]
+    fn list_arguments_accept_arrays_and_sub_slices() {
+        let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
+        let all = alloc::vec![unit_box(0.0, 1.0), unit_box(1.0, 1.0)];
+        assert_eq!(grid.hit_tests([Px::new(5.0)], &[unit_box(0.0, 1.0)], None), alloc::vec![true]);
+        assert_eq!(grid.hit_test([Px::new(20.0)], &all[1..], None), Some(0));
+        assert_eq!(grid.box_as_px(&all[..1]).len(), 1);
+        assert_eq!(grid.point_as_px(&[[Unit::new(1.0)]])[0][0].as_ref().unwrap().get(), 10.0);
     }
 }

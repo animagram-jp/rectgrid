@@ -94,11 +94,11 @@ cargo +nightly fmt
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | Replaces the definition for axis d |
 |               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | Inverts px to unit (origin subtracted first); the accumulator must be non-decreasing over Unit >= 0 |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | Converts a unit coordinate to px (evaluates the accumulator directly) |
-|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | Converts unit points to px, one Result per axis |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts boundary boxes to (base_px, offset_px), one Result per axis |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boundary boxes point hits; an unevaluable boundary box never hits |
-|               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | Like hit_test, returns the highest-index hit along with the get_parameter-equivalent value |
-|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Returns hit/no-hit for every boundary box, in a Vec of the same length |
+|               | `point_as_px`         | `points: &[Point<D>]` | `Vec<[Result<Px, RectgridError>; D]>` | Converts unit points to px, one Result per axis |
+|               | `box_as_px`           | `boxes: &[BBox<D>]` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts boundary boxes to (base_px, offset_px), one Result per axis |
+|               | `hit_test`            | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boundary boxes point hits; an unevaluable boundary box never hits |
+|               | `hit_test_with_parameter` | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | Like hit_test, returns the highest-index hit along with the get_parameter-equivalent value |
+|               | `hit_tests`           | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Returns hit/no-hit for every boundary box, in a Vec of the same length |
 |               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | Signed local coordinate (side length normalized to 1), one Result per axis |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointer's local coordinate (after origin correction) with z subtracted |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | For a BBox with area, determines whether point is near an edge (within threshold) |
@@ -171,11 +171,11 @@ cargo +nightly fmt
 |               | `set_definition`      | `definition: IncrementFunction, d: usize` | `Result<(), RectgridError>` | d軸の定義を差し替える |
 |               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | pxをunitへ逆変換(originを差し引いてから変換。accumulatorがUnit>=0で単調非減少である前提) |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
-|               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | 複数のunit座標点をpxへ変換。軸ごとのResultを返す |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | 複数のBBoxを(base_px, offset_px)へ変換。軸ごとのResultを返す |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboundary boxのうちindex最大のものを返す。評価不能なboundary boxはhitしない |
-|               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
-|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | 全てのboundary boxについてhit有無を、同じ長さのVecで返す |
+|               | `point_as_px`         | `points: &[Point<D>]` | `Vec<[Result<Px, RectgridError>; D]>` | 複数のunit座標点をpxへ変換。軸ごとのResultを返す |
+|               | `box_as_px`           | `boxes: &[BBox<D>]` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | 複数のBBoxを(base_px, offset_px)へ変換。軸ごとのResultを返す |
+|               | `hit_test`            | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboundary boxのうちindex最大のものを返す。評価不能なboundary boxはhitしない |
+|               | `hit_test_with_parameter` | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
+|               | `hit_tests`           | `point: [Px; D], boxes: &[BBox<D>], extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | 全てのboundary boxについてhit有無を、同じ長さのVecで返す |
 |               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | 単一のboundary boxの各辺長を1とした符号付き局所座標。軸ごとのResultを返す |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
