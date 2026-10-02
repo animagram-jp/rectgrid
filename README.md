@@ -109,6 +109,29 @@ cargo +nightly fmt
 | - | `snap_bbox_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | At DragEnd, snaps the move-drag result of a boundary box with area to the Unit grid |
 | - | `snap_point_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], snap: [Unit; D]` | `Result<BBox<D>, RectgridError>` | At DragEnd, computes a boundary box snapped to the Unit grid from the move-drag result of a boundary box without area (a point) |
 
+## Geometry ports
+
+Requires the `geometry` feature (`rectgrid::geometry`).
+
+| Item | Port | Parameter | Return | Description |
+|-|-|-|-|-|
+| `Line<D>` | `start` | - | `Point<D>` | Start point |
+|           | `end` | - | `Point<D>` | End point |
+| `Circle<D>` | `center` | - | `Point<D>` | Center |
+|             | `radius` | - | `Unit` | Radius |
+|             | `from_three_points` | `a: Point<2>, b: Point<2>, c: Point<2>` | `Option<Self>` | Circle through three points (`Circle<2>`); None when they are collinear (relative threshold 1e-12) |
+| `Ellipse<D>` | `center` | - | `Point<D>` | Center |
+|              | `rx` | - | `Unit` | Semi-axis along x (axis-aligned) |
+|              | `ry` | - | `Unit` | Semi-axis along y (axis-aligned) |
+| `Polygon<D>` | `vertices` | - | `Vec<Point<D>>` | Vertices in order; the last connects back to the first |
+| `PointOnGeometry<D>` | `t` | - | `Parameter` | Position of `projected` on the geometry; its meaning is given per `as_on_*` |
+|                      | `projected` | - | `Point<D>` | Closest point on the geometry |
+|                      | `signed_distance` | - | `Unit` | Distance to `projected`; negative inside, positive outside |
+| - | `as_on_line` | `point: [Unit; 2], line: Line<2>` | `PointOnGeometry<2>` | Projection onto the infinite line; t is unclamped (0 at start, 1 at end); signed_distance is positive when `cross(end - start, point - start) > 0` |
+| - | `as_on_circle` | `point: [Unit; 2], circle: Circle<2>` | `PointOnGeometry<2>` | t is the angle (radians, `atan2`) of point around the center |
+| - | `as_on_ellipse` | `point: [Unit; 2], ellipse: Ellipse<2>` | `PointOnGeometry<2>` | Exact distance; t is the parametric angle of the closest point; a zero `rx` or `ry` gives the distance to the center |
+| - | `as_on_polygon` | `point: [Unit; 2], polygon: Polygon<2>` | `(PointOnGeometry<2>, usize)` | Nearest edge: t in [0, 1] on it, and its index (edge `i` runs `vertices[i]` to `vertices[i + 1]`); outside is positive for a counter-clockwise polygon; panics below 3 vertices |
+
 ## Internal ports
 
 | Item | Port | Parameter | Return | Description |
@@ -187,6 +210,29 @@ cargo +nightly fmt
 | - | `drag_translate<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D]` | `[Px; D]` | 移動ドラッグ中のbaseのpx位置を求める |
 | - | `snap_bbox_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], bx: &BBox<D>, extend: Option<[Unit; D]>` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持つboundary boxの移動ドラッグ結果をUnit格子にスナップする |
 | - | `snap_point_to_unit<D, P>` | `grid: &RectGrid<D, P>, pointer: [Px; D], drag_offset: [Px; D], snap: [Unit; D]` | `Result<BBox<D>, RectgridError>` | DragEnd時、面積を持たない(点の)boundary boxの移動ドラッグ結果をUnit格子にスナップしたboundary boxを求める |
+
+## geometryポート
+
+`geometry` featureが必要(`rectgrid::geometry`)。
+
+| アイテム | ポート | 引数 | 戻り値 | 説明 |
+|-|-|-|-|-|
+| `Line<D>` | `start` | - | `Point<D>` | 始点 |
+|           | `end` | - | `Point<D>` | 終点 |
+| `Circle<D>` | `center` | - | `Point<D>` | 中心 |
+|             | `radius` | - | `Unit` | 半径 |
+|             | `from_three_points` | `a: Point<2>, b: Point<2>, c: Point<2>` | `Option<Self>` | 3点を通る円(`Circle<2>`)。3点が一直線上(相対閾値1e-12)ならNone |
+| `Ellipse<D>` | `center` | - | `Point<D>` | 中心 |
+|              | `rx` | - | `Unit` | x方向の半径(軸平行) |
+|              | `ry` | - | `Unit` | y方向の半径(軸平行) |
+| `Polygon<D>` | `vertices` | - | `Vec<Point<D>>` | 頂点を順に並べたもの。最後の頂点は最初の頂点へ戻る |
+| `PointOnGeometry<D>` | `t` | - | `Parameter` | `projected`の幾何上の位置。意味は`as_on_*`ごと |
+|                      | `projected` | - | `Point<D>` | 幾何上の最近点 |
+|                      | `signed_distance` | - | `Unit` | `projected`までの距離。内側が負、外側が正 |
+| - | `as_on_line` | `point: [Unit; 2], line: Line<2>` | `PointOnGeometry<2>` | 無限直線への射影。tは切り詰めない(startで0、endで1)。`cross(end - start, point - start) > 0`のときsigned_distanceは正 |
+| - | `as_on_circle` | `point: [Unit; 2], circle: Circle<2>` | `PointOnGeometry<2>` | tは中心まわりのpointの角度(ラジアン、`atan2`) |
+| - | `as_on_ellipse` | `point: [Unit; 2], ellipse: Ellipse<2>` | `PointOnGeometry<2>` | 厳密な距離。tは最近点のパラメトリック角。`rx`か`ry`が0なら中心までの距離 |
+| - | `as_on_polygon` | `point: [Unit; 2], polygon: Polygon<2>` | `(PointOnGeometry<2>, usize)` | 最近辺上のt(0〜1)とその辺のindex(辺`i`は`vertices[i]`から`vertices[i + 1]`)。反時計回りの多角形では外側が正。3頂点未満はpanic |
 
 ## 内部ポート
 
