@@ -7,6 +7,8 @@ Boundary box operations on rectilinear grids with arbitrary unit systems.
 - A crate for operating on a two-point coordinate boundary box and its collections, defined over the grid of an arbitrary unit system — a rectilinear grid whose axes each have an independent increment function. Such a unit system is defined by an intrinsic origin and per-axis increment functions, both expressed in a base unit (unit: a general-purpose unit). It further provides, for any single boundary box, a conversion function into a local unit system (parameter) in which each axis has unit vector length, making it possible to implement boundary tests against arbitrary geometry.
 - The base unit system is defined as the unit system whose origin lies at (0, ..., 0) and whose per-axis increment functions all return the constant 1. This base unit is named Px (pixel: picture element).
 
+The `rectgrid::geometry` module requires the `geometry` feature (off by default).
+
 [English](#rectgrid) | [日本語](#ja)
 
 ---
@@ -42,14 +44,6 @@ wasm-bindgen --target web --out-dir app --out-name app target/wasm32-unknown-unk
 # auto formatter
 cargo +nightly fmt
 ```
-
----
-
-## Features
-
-| Feature | Default | Description |
-|-|-|-|
-| `geometry` | off | Enables the `rectgrid::geometry` module (`Line`, `Circle`, `Ellipse`, `Polygon`, `as_on_*`) |
 
 ---
 
@@ -144,11 +138,7 @@ cargo +nightly fmt
 
 - 与単位系とは、原点の座標が(0,...,0), 全ての軸の階差関数が定数1を返す単位系を指す。単位名をPx(pixel: picture element)とする。
 
-## Features
-
-| Feature | Default | 説明 |
-|-|-|-|
-| `geometry` | off | `rectgrid::geometry`モジュール(`Line`, `Circle`, `Ellipse`, `Polygon`, `as_on_*`)を有効化する |
+`rectgrid::geometry`モジュールには`geometry` feature(既定はoff)が必要。
 
 ## 座標系
 
