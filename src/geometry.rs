@@ -1198,7 +1198,7 @@ mod tests {
         }
     }
 
-    /// Sweeps the hard regions (nearly circular, extreme eccentricity, the evolute cusp, tiny and huge
+    /// Sweeps the hard cases (nearly circular, extreme eccentricity, the evolute cusp, tiny and huge
     /// coordinates): the iteration bound holds and the root agrees with a geometric bisection.
     #[test]
     fn ellipse_root_iteration_count_is_bounded_and_agrees_with_reference() {

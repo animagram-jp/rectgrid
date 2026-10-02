@@ -2,9 +2,9 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rectgrid.svg)](https://crates.io/crates/rectgrid)
 
-Region operations on rectilinear grids with arbitrary unit systems.
+Boundary box operations on rectilinear grids with arbitrary unit systems.
 
-- A geometry module for operating on a two-point coordinate region (a box) and its collections (a region), defined over the grid of an arbitrary unit system — a rectilinear grid whose axes each have an independent increment function. Such a unit system is defined by an intrinsic origin and per-axis difference functions, both expressed in a base unit (unit: a general-purpose unit). It further provides, for any single box, a conversion function into a local unit system (parameter) in which each axis has unit vector length, making it possible to implement boundary tests against arbitrary geometry.
+- A geometry module for operating on a two-point coordinate boundary box and its collections, defined over the grid of an arbitrary unit system — a rectilinear grid whose axes each have an independent increment function. Such a unit system is defined by an intrinsic origin and per-axis difference functions, both expressed in a base unit (unit: a general-purpose unit). It further provides, for any single boundary box, a conversion function into a local unit system (parameter) in which each axis has unit vector length, making it possible to implement boundary tests against arbitrary geometry.
 - The base unit system is defined as the unit system whose origin lies at (0, ..., 0) and whose per-axis difference functions all return the constant 1. This base unit is named Px (pixel: picture element).
 
 [English](#rectgrid) | [日本語](#ja)
@@ -56,7 +56,7 @@ cargo +nightly fmt
 ## Coordinate system
 
 - When treating the rectgrid module's x and y as 2D coordinates, x is the axis that becomes the width in the viewport, y is the height direction, and the origin (0,0) is the top-left corner.
-- Px passed into a function from outside this module is global (an external coordinate not yet corrected for origin, e.g. a viewport coordinate); each function subtracts origin internally to make it local. Px derived from a box (base/offset) — the return value of `unit_to_px`, and anything built on it such as `hit_test`/`*_as_px` results — is always local (origin=0 as the reference). If such a value is passed back across a `RectGrid` boundary, treat it as local px.
+- Px passed into a function from outside this module is global (an external coordinate not yet corrected for origin, e.g. a viewport coordinate); each function subtracts origin internally to make it local. Px derived from a boundary box (base/offset) — the return value of `unit_to_px`, and anything built on it such as `hit_test`/`*_as_px` results — is always local (origin=0 as the reference). If such a value is passed back across a `RectGrid` boundary, treat it as local px.
 
 ---
 
@@ -95,10 +95,10 @@ cargo +nightly fmt
 |               | `point_to_unit`       | `point: [Px; D]` | `[Result<Unit, RectgridError>; D]` | Inverts px to unit (origin subtracted first); the accumulator must be non-decreasing over Unit >= 0 |
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | Converts a unit coordinate to px (evaluates the accumulator directly) |
 |               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | Converts unit points to px, one Result per axis |
-|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts boxes to (base_px, offset_px), one Result per axis |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boxes point hits; an unevaluable box never hits |
+|               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | Converts boundary boxes to (base_px, offset_px), one Result per axis |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | Returns the highest index among the boundary boxes point hits; an unevaluable boundary box never hits |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | Like hit_test, returns the highest-index hit along with the get_parameter-equivalent value |
-|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Scans every box point hits and returns hit/no-hit for each, in a Vec the same length as boxes |
+|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | Returns hit/no-hit for every boundary box, in a Vec of the same length |
 |               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | Signed local coordinate (side length normalized to 1), one Result per axis |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointer's local coordinate (after origin correction) with z subtracted |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | For a BBox with area, determines whether point is near an edge (within threshold) |
@@ -113,7 +113,7 @@ cargo +nightly fmt
 |-|-|-|-|-|
 | `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | Forward/inverse conversion per axis |
 |               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | Delegates to `accumulator[i].inverse` |
-|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | Hit test backing hit_test/hit_tests/hit_test_with_parameter; None if the box is unevaluable |
+|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | Hit test backing hit_test/hit_tests/hit_test_with_parameter; None if the boundary box is unevaluable |
 |               | `unit_to_px_clipped` | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit_to_px for an extend edge, clipped at a finite domain end |
 |               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | Shared by hit_test_with_parameter |
 |               | `parameter_axis` | `point: Px, base_px: Px, far_px: Px` | `Parameter` | One axis of parameter_from_px, shared by get_parameter |
@@ -122,7 +122,7 @@ cargo +nightly fmt
 
 # Ja
 
-- 各軸が独立した階差関数を持つ直交座標系(rectilinear grid)の、固有の原点座標と各軸の階差関数を与単位で定義した任意単位系(unit: 一般単位)の格子上で、2点間座標領域(box)とその集合(region)を操作するための幾何計算モジュール。さらに、単一のboxの、各軸のベクトル長を1とした局所単位系(parameter)への変換関数により、任意の幾何による境界判定を実装可能にする。
+- 各軸が独立した階差関数を持つ直交座標系(rectilinear grid)の、固有の原点座標と各軸の階差関数を与単位で定義した任意単位系(unit: 一般単位)の格子上で、2点間座標のboundary boxとその集合を操作するための幾何計算モジュール。さらに、単一のboundary boxの、各軸のベクトル長を1とした局所単位系(parameter)への変換関数により、任意の幾何による境界判定を実装可能にする。
 
 - 与単位系とは、原点の座標が(0,...,0), 全ての軸の階差関数が定数1を返す単位系を指す。単位名をPx(pixel: picture element)とする。
 
@@ -135,7 +135,7 @@ cargo +nightly fmt
 ## 座標系
 
 - rectgridモジュールのx, yを2D座標として扱う場合、xはviewportで幅になる軸、yは高さ方向、原点(0,0)は左上隅とする。
-- モジュール外部から関数引数として渡されるpxはglobal(origin未補正の外部座標、例えばviewport座標)として受け取り、各関数の内部でoriginを差し引いてlocal化する。一方、box(base/offset)由来のpx(`unit_to_px`の戻り値や、それを使う`hit_test`系・`*_as_px`系の戻り値)は常にlocal(origin=0を基準とした座標)を返す。呼び出し側が`RectGrid`を跨いで再度渡す場合はlocal pxとして扱う。
+- モジュール外部から関数引数として渡されるpxはglobal(origin未補正の外部座標、例えばviewport座標)として受け取り、各関数の内部でoriginを差し引いてlocal化する。一方、boundary box(base/offset)由来のpx(`unit_to_px`の戻り値や、それを使う`hit_test`系・`*_as_px`系の戻り値)は常にlocal(origin=0を基準とした座標)を返す。呼び出し側が`RectGrid`を跨いで再度渡す場合はlocal pxとして扱う。
 
 ## 公開ポート
 
@@ -173,10 +173,10 @@ cargo +nightly fmt
 |               | `unit_to_px`          | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | unit座標をpxへ変換(accumulatorをそのまま評価) |
 |               | `point_as_px`         | `points: &Vec<Point<D>>` | `Vec<[Result<Px, RectgridError>; D]>` | 複数のunit座標点をpxへ変換。軸ごとのResultを返す |
 |               | `box_as_px`           | `boxes: &Vec<BBox<D>>` | `Vec<[Result<(Px, Px), RectgridError>; D]>` | 複数のBBoxを(base_px, offset_px)へ変換。軸ごとのResultを返す |
-|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboxesのうちindex最大のものを返す。評価不能なboxはhitしない |
+|               | `hit_test`            | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<usize>` | pointにhitするboundary boxのうちindex最大のものを返す。評価不能なboundary boxはhitしない |
 |               | `hit_test_with_parameter` | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(usize, [Parameter; D])>` | hit_testと同様にindex最大のhitとget_parameter相当の値を返す |
-|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | pointがhitするboxを全て走査し、boxesと同じ長さのhit有無を返す |
-|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | 単一boxの各辺長を1とした符号付き局所座標。軸ごとのResultを返す |
+|               | `hit_tests`           | `point: [Px; D], boxes: &Vec<BBox<D>>, extend: Option<([Unit; D], [Unit; D])>` | `Vec<bool>` | 全てのboundary boxについてhit有無を、同じ長さのVecで返す |
+|               | `get_parameter`           | `point: [Px; D], bx: BBox<D>` | `[Result<Parameter, RectgridError>; D]` | 単一のboundary boxの各辺長を1とした符号付き局所座標。軸ごとのResultを返す |
 |               | `offset`              | `pointer: [Px; D], z: [Px; D]` | `[Px; D]` | pointerのlocal座標(origin補正後)からzを差し引いた値 |
 | - | `corner_test<D>` | `grid: &RectGrid<D>, point: [Px; D], bx: &BBox<D>, threshold: f64, extend: Option<([Unit; D], [Unit; D])>` | `(Option<[Parameter; D]>, Option<[Option<bool>; D]>)` | 面積を持つBBoxに対しpointが辺付近(threshold未満)にあるかを判定 |
 | - | `drag_resize<D>` | `grid: &RectGrid<D>, pointer: [Px; D], bx: &BBox<D>, corner: [Option<bool>; D]` | `Result<BBox<D>, RectgridError>` | 角ハンドルドラッグによってBBoxのbase/offsetを更新する |
@@ -190,7 +190,7 @@ cargo +nightly fmt
 |-|-|-|-|-|
 | `RectGrid<D>` | `accumulator` | - | `[Accumulator; D]` | 各軸の順変換・逆変換 |
 |               | `px_to_unit_axis` | `i: usize, target: Px` | `Result<Unit, RectgridError>` | accumulator[i].inverseに委譲 |
-|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | hit_test/hit_tests/hit_test_with_parameterの共通判定。boxが評価不能ならNone |
+|               | `contains` | `point: [Px; D], bx: &BBox<D>, extend: Option<([Unit; D], [Unit; D])>` | `Option<(bool, [Px; D], [Px; D])>` | hit_test/hit_tests/hit_test_with_parameterの共通判定。boundary boxが評価不能ならNone |
 |               | `unit_to_px_clipped` | `d: usize, unit: &Unit` | `Result<Px, RectgridError>` | extend辺用のunit_to_px。有限の定義域の終端で切り詰める |
 |               | `parameter_from_px` | `point: [Px; D], base_px: [Px; D], offset_px: [Px; D]` | `[Parameter; D]` | hit_test_with_parameterで使用 |
 |               | `parameter_axis` | `point: Px, base_px: Px, far_px: Px` | `Parameter` | parameter_from_pxの1軸分。get_parameterで共有 |

@@ -327,7 +327,7 @@ fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
 
 /// Rectilinear grid with an independent accumulator per axis.
 /// Px passed in from outside is global (origin not yet subtracted) and each method subtracts `origin` itself;
-/// Px derived from a box (`unit_to_px` and what is built on it) is local.
+/// Px derived from a boundary box (`unit_to_px` and what is built on it) is local.
 pub struct RectGrid<const D: usize> {
     pub origin:  [Px; D],
     accumulator: [Accumulator; D],
@@ -427,7 +427,7 @@ impl<const D: usize> RectGrid<D> {
         }
     }
 
-    /// Returns None when the box is not evaluable (some axis of box_as_px is Err): it is never hit.
+    /// Returns None when the boundary box is not evaluable (some axis of box_as_px is Err): it is never hit.
     /// Otherwise (whether it hit, base_px without extend, offset_px without extend), the px reusable for the parameter.
     /// extend is added in unit space before conversion to px, so the width does not drift under a nonlinear accumulator;
     /// an edge past the end of a finite domain is clipped there (see unit_to_px_clipped).
@@ -469,8 +469,8 @@ impl<const D: usize> RectGrid<D> {
         }
     }
 
-    /// Returns the highest index among the boxes that point hits (a higher index has higher priority).
-    /// A box that is not evaluable (some axis of box_as_px is Err) is never hit; an extend past a finite domain end is clipped there.
+    /// Returns the highest index among the boundary boxes that point hits (a higher index has higher priority).
+    /// A boundary box that is not evaluable (some axis of box_as_px is Err) is never hit; an extend past a finite domain end is clipped there.
     ///
     /// ```
     /// extern crate alloc;
@@ -497,7 +497,7 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// Like hit_test, with the get_parameter value of the hit box. The parameter is unaffected by extend.
+    /// Like hit_test, with the get_parameter value of the hit boundary box. The parameter is unaffected by extend.
     ///
     /// ```
     /// extern crate alloc;
@@ -525,7 +525,7 @@ impl<const D: usize> RectGrid<D> {
         })
     }
 
-    /// Hit/no-hit per box, in order. A box that is not evaluable is no-hit (see hit_test).
+    /// Hit/no-hit per boundary box, in order. A boundary box that is not evaluable is no-hit (see hit_test).
     ///
     /// ```
     /// extern crate alloc;
@@ -567,7 +567,7 @@ impl<const D: usize> RectGrid<D> {
     /// let parameter = grid.get_parameter([Px::new(300.0), Px::new(16.0)], bx);
     /// assert!((parameter[0].as_ref().unwrap().get() - 0.5).abs() < 1e-9);
     /// assert!((parameter[1].as_ref().unwrap().get() - 0.25).abs() < 1e-9);
-    /// // outside the box (base side), parameter goes negative
+    /// // outside the boundary box (base side), parameter goes negative
     /// let parameter = grid.get_parameter([Px::new(100.0), Px::new(0.0)], bx);
     /// assert!((parameter[0].as_ref().unwrap().get() - (-0.5)).abs() < 1e-9);
     /// ```
@@ -584,7 +584,7 @@ impl<const D: usize> RectGrid<D> {
     }
 
     /// Converts multiple BBox to (base_px, offset_px) per axis, with offset_px = unit_to_px(base+offset) - unit_to_px(base)
-    /// (correct under a nonlinear accumulator). Each axis is evaluated independently: a box gives one `Result` per axis
+    /// (correct under a nonlinear accumulator). Each axis is evaluated independently: a boundary box gives one `Result` per axis
     /// (Err, e.g. OutOfIndex(last), for an unevaluable axis).
     ///
     /// ```
@@ -633,7 +633,7 @@ impl<const D: usize> RectGrid<D> {
 /// If any axis is Some it is a handle hit (all axes Some = corner, one = edge); all None returns None
 /// (the caller falls back to e.g. a move drag).
 /// extend (as in hit_test) is converted to a parameter-space margin per axis (extend / offset).
-/// parameter is None when the box has no size, an axis is unevaluable, or point is outside bx (extend included).
+/// parameter is None when the boundary box has no size, an axis is unevaluable, or point is outside bx (extend included).
 ///
 /// ```
 /// use rectgrid::{RectGrid, IncrementFunction, BBox, Px, Unit, corner_test};
@@ -1165,7 +1165,7 @@ mod tests {
         BBox::new([Unit::new(base)], [Unit::new(offset)])
     }
 
-    /// VectorList [0, 10] has the domain units 0..=1; a box at units 5..6 is never hit.
+    /// VectorList [0, 10] has the domain units 0..=1; a boundary box at units 5..6 is never hit.
     #[test]
     fn hit_test_box_beyond_finite_domain_never_hits() {
         let grid = vector_list_grid(&[0.0, 10.0]);
@@ -1210,7 +1210,7 @@ mod tests {
         }
     }
 
-    /// The box is the last cell (px 10..30) of VectorList [0, 10, 30] and extend reaches past the domain end: it is clipped there. The parameter is relative to the box, not to extend.
+    /// The boundary box is the last cell (px 10..30) of VectorList [0, 10, 30] and extend reaches past the domain end: it is clipped there. The parameter is relative to the boundary box, not to extend.
     #[test]
     fn hit_test_extend_is_clipped_at_the_domain_end() {
         let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
@@ -1228,7 +1228,7 @@ mod tests {
         assert_eq!(parameter[0].get(), 0.5);
     }
 
-    /// Three steps of 10 (domain 0..=3); extend is clipped at the domain end and a box starting beyond it is not evaluable.
+    /// Three steps of 10 (domain 0..=3); extend is clipped at the domain end and a boundary box starting beyond it is not evaluable.
     #[test]
     fn hit_test_extend_is_clipped_for_forward_difference_domains() {
         let grid = RectGrid::<1>::new(
@@ -1268,7 +1268,7 @@ mod tests {
         assert_eq!(grid.hit_test([Px::new(50.0), Px::new(5.0)], &inside, None), Some(0));
     }
 
-    /// Only OutOfIndex is clipped at a domain end: other evaluation errors make the box unevaluable.
+    /// Only OutOfIndex is clipped at a domain end: other evaluation errors make the boundary box unevaluable.
     #[test]
     fn hit_test_other_evaluation_errors_also_mean_not_evaluable() {
         let grid = RectGrid::<1>::new(
@@ -1387,7 +1387,7 @@ mod tests {
         assert_eq!(grid.unit_to_px(0, &Unit::new(last as f64)).unwrap().get(), 30.0);
     }
 
-    /// Axis 0 would be inside the box but axis 1 lies beyond its finite domain: nothing is reported.
+    /// Axis 0 would be inside the boundary box but axis 1 lies beyond its finite domain: nothing is reported.
     #[test]
     fn corner_test_reports_nothing_when_any_axis_cannot_be_evaluated() {
         let grid = RectGrid::<2>::new(
