@@ -2450,7 +2450,7 @@ mod wire_tests {
                 message:  String::from("boom"),
             }),
         });
-        assert_eq!(&panic[..7], [13, 1, 2, 4, 0, 1, 0]);
+        assert_eq!(&panic[..7], [13, 1, 2, 3, 0, 1, 0]);
         assert_eq!(
             &panic[7..],
             [12, 0, 0, 0, b'a', b'.', b'r', b's', b':', b'1', b':', b' ', b'b', b'o', b'o', b'm']

@@ -26,7 +26,7 @@ wire_error! {
     Error {
         Arena(ArenaError) = 1,
         Event(EventError) = 2,
-        Panic(PanicError) = 4,
+        Panic(PanicError) = 3,
     }
 }
 
@@ -73,7 +73,7 @@ mod error_tests {
         assert_eq!(identifiers(&Error::Arena(ArenaError::CommandOverflow)), [1, 1]);
         assert_eq!(identifiers(&Error::Event(EventError::Decode)), [2, 1]);
         let panic = PanicError { location: String::new(), message: String::new() };
-        assert_eq!(identifiers(&Error::Panic(panic)), [4, 1]);
+        assert_eq!(identifiers(&Error::Panic(panic)), [3, 1]);
     }
 
     #[test]
