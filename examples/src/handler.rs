@@ -1,4 +1,4 @@
-use alloc::{format, vec, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 use core::array::from_fn;
 
 use rectgrid::{
@@ -11,8 +11,8 @@ use rectgrid::{
 use crate::{
     event::Event,
     js_client::{
-        CanvasEvent, ClassName, Command, EventType, Gesture, Keyword, PointerState, StyleProperty,
-        StyleValue, Unit, VisibilityState,
+        CanvasEvent, Command, EventType, Gesture, Keyword, PointerState, StyleProperty, StyleValue,
+        Unit, VisibilityState,
         dom::{Id, Tag},
     },
 };
@@ -346,7 +346,7 @@ impl Handler {
             return vec![];
         }
         self.drop_zone_active = inside;
-        vec![highlight(DROP_ZONE_ARTICLE, inside)]
+        highlight(DROP_ZONE_ARTICLE, inside)
     }
 
     fn clear_drop_zone(&mut self) -> Vec<Command> {
@@ -354,7 +354,7 @@ impl Handler {
             return vec![];
         }
         self.drop_zone_active = false;
-        vec![highlight(DROP_ZONE_ARTICLE, false)]
+        highlight(DROP_ZONE_ARTICLE, false)
     }
 
     fn drop_zone_commands(&self) -> Vec<Command> {
@@ -384,11 +384,11 @@ impl Handler {
 }
 
 fn article(n: u32) -> Id {
-    Id::new(&[(Tag::Section, None), (Tag::Article, Some(n))])
+    Id::new(&[(Tag::Main, None), (Tag::Article, Some(n))])
 }
 
 fn section() -> Id {
-    Id::new(&[(Tag::Section, None)])
+    Id::new(&[(Tag::Main, None)])
 }
 
 fn style(id: Id, property: StyleProperty, value: StyleValue) -> Command {
@@ -414,11 +414,25 @@ fn translate_article(n: u32, x: f64, y: f64) -> Command {
     )
 }
 
-fn highlight(n: u32, on: bool) -> Command {
+fn highlight(n: u32, on: bool) -> Vec<Command> {
     if on {
-        Command::AddClass { id: article(n), value: ClassName::Highlighted }
+        vec![
+            style(
+                article(n),
+                StyleProperty::Background,
+                StyleValue::Text(String::from("var(--color-emphasis-ink)")),
+            ),
+            style(
+                article(n),
+                StyleProperty::Color,
+                StyleValue::Text(String::from("var(--color-paper)")),
+            ),
+        ]
     } else {
-        Command::RemoveClass { id: article(n), value: ClassName::Highlighted }
+        vec![
+            Command::RemoveStyle { id: article(n), property: StyleProperty::Background },
+            Command::RemoveStyle { id: article(n), property: StyleProperty::Color },
+        ]
     }
 }
 
@@ -542,11 +556,20 @@ mod tests {
                 (StyleProperty::Background, StyleValue::Text(text)) => {
                     format!("background {} {}", id_string(id), text)
                 }
+                (StyleProperty::Color, StyleValue::Text(text)) => {
+                    format!("color {} {}", id_string(id), text)
+                }
                 (StyleProperty::Cursor, StyleValue::Keyword(keyword)) => {
                     format!("cursor {} {:?}", id_string(id), keyword)
                 }
                 other => panic!("unexpected style command: {other:?}"),
             },
+            Command::RemoveStyle { id, property: StyleProperty::Background } => {
+                format!("background {} Unset", id_string(id))
+            }
+            Command::RemoveStyle { id, property: StyleProperty::Color } => {
+                format!("color {} Unset", id_string(id))
+            }
             Command::RemoveStyle { id, property: StyleProperty::Cursor } => {
                 format!("cursor {} Unset", id_string(id))
             }
@@ -562,7 +585,7 @@ mod tests {
         let mut frame = Vec::new();
         frame.push(EVENT_CANVAS);
         frame.push(event_type);
-        dom::Id::new(&[(dom::Tag::Section, None), (dom::Tag::Article, Some(article))])
+        dom::Id::new(&[(dom::Tag::Main, None), (dom::Tag::Article, Some(article))])
             .encode(&mut frame);
         frame.push(0);
         frame.push(0);

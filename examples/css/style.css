@@ -56,12 +56,12 @@ body {
     padding-bottom: calc((1.5 - 1) / 2 * (2rem - 0.9rem));
 }
 
-#section {
+#main {
     position: relative;
     height: 100vh;
 }
 
-#section > article {
+#main > article {
     position: absolute;
     left: 0;
     top: 0;
@@ -74,18 +74,18 @@ body {
     box-shadow: var(--elevation-2);
 }
 
-#section > article:active {
+#main > article:active {
     cursor: grabbing;
 }
 
-#section_article-3 {
+#main_article-3 {
     width: 0;
     height: 0;
     min-width: 0;
     overflow: hidden;
 }
 
-#section > #section_article-4 {
+#main > #main_article-4 {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -95,12 +95,6 @@ body {
     cursor: default;
     color: var(--color-ink-mix);
     pointer-events: none;
-}
-
-#section > #section_article-4.highlighted {
-    background-color: var(--color-emphasis-ink);
-    border-color: var(--color-emphasis-ink);
-    color: var(--color-paper);
 }
 
 [data-chip-label] {

@@ -251,11 +251,11 @@ pub struct CanvasEvent {
     pub pointer_id: u32,
 }
 
-const ALT: Field = Field { position: 1, mask: (1 << 1) - 1 }; // bit 1
-const CTRL: Field = Field { position: 2, mask: (1 << 1) - 1 }; // bit 2
-const META: Field = Field { position: 3, mask: (1 << 1) - 1 }; // bit 3
-const REPEAT: Field = Field { position: 4, mask: (1 << 1) - 1 }; // bit 4
-const SHIFT: Field = Field { position: 5, mask: (1 << 1) - 1 }; // bit 5
+const ALT: Field = Field::new(1, 1); // bit 1
+const CTRL: Field = Field::new(2, 1); // bit 2
+const META: Field = Field::new(3, 1); // bit 3
+const REPEAT: Field = Field::new(4, 1); // bit 4
+const SHIFT: Field = Field::new(5, 1); // bit 5
 
 impl CanvasEvent {
     pub fn root_origin(&self) -> (f64, f64) {
@@ -285,7 +285,9 @@ impl CanvasEvent {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Attribute {
-    Disabled = 1,
+    AriaCurrent = 1,
+    DataSurround,
+    Disabled,
     Hidden,
 }
 
@@ -299,8 +301,6 @@ impl Attribute {
 pub enum ClassName {
     Hide = 1,
     Show,
-    Hidden,
-    Highlighted,
 }
 
 impl ClassName {
@@ -328,7 +328,10 @@ impl Keyword {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StyleProperty {
     Background = 1,
+    Color,
     Cursor,
+    GridTemplateColumns,
+    GridTemplateRows,
     Height,
     Translate,
     Width,
@@ -849,17 +852,10 @@ pub enum Gesture {
     SwipeDown,
     SwipeLeft,
     SwipeRight,
-    Drag {
-        x: f64,
-        y: f64,
-    }, // in dragging
+    Drag { x: f64, y: f64 }, // in dragging
     DragEnd,
     DragCancel,
-    Pinch {
-        scale:    f64,
-        center_x: f64,
-        center_y: f64,
-    },
+    Pinch { scale: f64, center_x: f64, center_y: f64 },
     PinchEnd,
 }
 
@@ -1781,6 +1777,7 @@ pub mod dom {
         Body,
         Button,
         Dd,
+        Div,
         Dl,
         Drawer, // <dialog id="*drawer*">
         Dt,
@@ -1791,22 +1788,27 @@ pub mod dom {
         H2,
         H3,
         Header,
+        Hgroup,
         Input,
+        Label,
         Li,
         Main,
         Modal, // <dialog id="*modal*">
+        Nav,
         Ol,
         Output,
         P,
         Section,
         Select,
         Span,
+        Strong,
         Table,
         Tbody,
         Td,
         Textarea,
         Th,
         Thead,
+        Toast,
         Tr,
         Ul,
         Other,
@@ -1826,34 +1828,40 @@ pub mod dom {
                 Self::Body => 2,
                 Self::Button => 3,
                 Self::Dd => 4,
-                Self::Dl => 5,
-                Self::Drawer => 6,
-                Self::Dt => 7,
-                Self::Fieldset => 8,
-                Self::Footer => 9,
-                Self::Form => 10,
-                Self::H1 => 11,
-                Self::H2 => 12,
-                Self::H3 => 13,
-                Self::Header => 14,
-                Self::Input => 15,
-                Self::Li => 16,
-                Self::Main => 17,
-                Self::Modal => 18,
-                Self::Ol => 19,
-                Self::Output => 20,
-                Self::P => 21,
-                Self::Section => 22,
-                Self::Select => 23,
-                Self::Span => 24,
-                Self::Table => 25,
-                Self::Tbody => 26,
-                Self::Td => 27,
-                Self::Textarea => 28,
-                Self::Th => 29,
-                Self::Thead => 30,
-                Self::Tr => 31,
-                Self::Ul => 32,
+                Self::Div => 5,
+                Self::Dl => 6,
+                Self::Drawer => 7,
+                Self::Dt => 8,
+                Self::Fieldset => 9,
+                Self::Footer => 10,
+                Self::Form => 11,
+                Self::H1 => 12,
+                Self::H2 => 13,
+                Self::H3 => 14,
+                Self::Header => 15,
+                Self::Hgroup => 16,
+                Self::Input => 17,
+                Self::Label => 18,
+                Self::Li => 19,
+                Self::Main => 20,
+                Self::Modal => 21,
+                Self::Nav => 22,
+                Self::Ol => 23,
+                Self::Output => 24,
+                Self::P => 25,
+                Self::Section => 26,
+                Self::Select => 27,
+                Self::Span => 28,
+                Self::Strong => 29,
+                Self::Table => 30,
+                Self::Tbody => 31,
+                Self::Td => 32,
+                Self::Textarea => 33,
+                Self::Th => 34,
+                Self::Thead => 35,
+                Self::Toast => 36,
+                Self::Tr => 37,
+                Self::Ul => 38,
                 Self::Other => 0,
             }
         }
@@ -1869,34 +1877,40 @@ pub mod dom {
                 2 => Self::Body,
                 3 => Self::Button,
                 4 => Self::Dd,
-                5 => Self::Dl,
-                6 => Self::Drawer,
-                7 => Self::Dt,
-                8 => Self::Fieldset,
-                9 => Self::Footer,
-                10 => Self::Form,
-                11 => Self::H1,
-                12 => Self::H2,
-                13 => Self::H3,
-                14 => Self::Header,
-                15 => Self::Input,
-                16 => Self::Li,
-                17 => Self::Main,
-                18 => Self::Modal,
-                19 => Self::Ol,
-                20 => Self::Output,
-                21 => Self::P,
-                22 => Self::Section,
-                23 => Self::Select,
-                24 => Self::Span,
-                25 => Self::Table,
-                26 => Self::Tbody,
-                27 => Self::Td,
-                28 => Self::Textarea,
-                29 => Self::Th,
-                30 => Self::Thead,
-                31 => Self::Tr,
-                32 => Self::Ul,
+                5 => Self::Div,
+                6 => Self::Dl,
+                7 => Self::Drawer,
+                8 => Self::Dt,
+                9 => Self::Fieldset,
+                10 => Self::Footer,
+                11 => Self::Form,
+                12 => Self::H1,
+                13 => Self::H2,
+                14 => Self::H3,
+                15 => Self::Header,
+                16 => Self::Hgroup,
+                17 => Self::Input,
+                18 => Self::Label,
+                19 => Self::Li,
+                20 => Self::Main,
+                21 => Self::Modal,
+                22 => Self::Nav,
+                23 => Self::Ol,
+                24 => Self::Output,
+                25 => Self::P,
+                26 => Self::Section,
+                27 => Self::Select,
+                28 => Self::Span,
+                29 => Self::Strong,
+                30 => Self::Table,
+                31 => Self::Tbody,
+                32 => Self::Td,
+                33 => Self::Textarea,
+                34 => Self::Th,
+                35 => Self::Thead,
+                36 => Self::Toast,
+                37 => Self::Tr,
+                38 => Self::Ul,
                 _ => Self::Other,
             }
         }
@@ -2046,7 +2060,7 @@ mod wire_tests {
     }
 
     fn id_bytes() -> [u8; 11] {
-        [2, 14, 255, 255, 255, 255, 3, 3, 0, 0, 0]
+        [2, 15, 255, 255, 255, 255, 3, 3, 0, 0, 0]
     }
 
     fn header_button_3() -> dom::Id {
@@ -2101,21 +2115,12 @@ mod wire_tests {
 
     #[test]
     fn command_tables_match_init_js() {
-        let tables: [(&str, Vec<(u16, String)>); 3] = [
-            (
-                "ATTRIBUTES",
-                vec![
-                    (Attribute::Disabled as u16, format!("{:?}", Attribute::Disabled)),
-                    (Attribute::Hidden as u16, format!("{:?}", Attribute::Hidden)),
-                ],
-            ),
+        let tables: [(&str, Vec<(u16, String)>); 2] = [
             (
                 "CLASS_NAMES",
                 vec![
                     (ClassName::Hide as u16, format!("{:?}", ClassName::Hide)),
                     (ClassName::Show as u16, format!("{:?}", ClassName::Show)),
-                    (ClassName::Hidden as u16, format!("{:?}", ClassName::Hidden)),
-                    (ClassName::Highlighted as u16, format!("{:?}", ClassName::Highlighted)),
                 ],
             ),
             (
@@ -2139,7 +2144,16 @@ mod wire_tests {
 
     #[test]
     fn style_tables_match_init_js() {
-        let tables: [(&str, Vec<(u16, &str)>); 3] = [
+        let tables: [(&str, Vec<(u16, &str)>); 4] = [
+            (
+                "ATTRIBUTES",
+                vec![
+                    (Attribute::AriaCurrent as u16, "aria-current"),
+                    (Attribute::DataSurround as u16, "data-surround"),
+                    (Attribute::Disabled as u16, "disabled"),
+                    (Attribute::Hidden as u16, "hidden"),
+                ],
+            ),
             (
                 "STYLE_KEYWORDS",
                 vec![
@@ -2155,7 +2169,10 @@ mod wire_tests {
                 "STYLE_PROPERTIES",
                 vec![
                     (StyleProperty::Background as u16, "background"),
+                    (StyleProperty::Color as u16, "color"),
                     (StyleProperty::Cursor as u16, "cursor"),
+                    (StyleProperty::GridTemplateColumns as u16, "grid-template-columns"),
+                    (StyleProperty::GridTemplateRows as u16, "grid-template-rows"),
                     (StyleProperty::Height as u16, "height"),
                     (StyleProperty::Translate as u16, "translate"),
                     (StyleProperty::Width as u16, "width"),
@@ -2353,11 +2370,11 @@ mod wire_tests {
                 attribute: Attribute::Hidden,
                 value:     String::from("x"),
             }),
-            with_id(3, &[2, 0, 1, 0, 0, 0, b'x'])
+            with_id(3, &[4, 0, 1, 0, 0, 0, b'x'])
         );
         assert_eq!(
-            encode(Command::AddClass { id: id.clone(), value: ClassName::Hidden }),
-            with_id(5, &[3, 0])
+            encode(Command::AddClass { id: id.clone(), value: ClassName::Show }),
+            with_id(5, &[2, 0])
         );
         assert_eq!(
             encode(Command::SetStyle {
@@ -2365,7 +2382,7 @@ mod wire_tests {
                 property: StyleProperty::Width,
                 value:    StyleValue::Length(1.5, Unit::Px),
             }),
-            with_id(7, &[5, 0, 3, 0, 0, 192, 63, 3])
+            with_id(7, &[8, 0, 3, 0, 0, 192, 63, 3])
         );
         assert_eq!(
             encode(Command::SetStyle {
@@ -2373,7 +2390,7 @@ mod wire_tests {
                 property: StyleProperty::ZIndex,
                 value:    StyleValue::Integer(-1),
             }),
-            with_id(7, &[6, 0, 1, 255, 255, 255, 255])
+            with_id(7, &[9, 0, 1, 255, 255, 255, 255])
         );
         assert_eq!(
             encode(Command::SetStyle {
@@ -2381,7 +2398,7 @@ mod wire_tests {
                 property: StyleProperty::Cursor,
                 value:    StyleValue::Keyword(Keyword::Grab),
             }),
-            with_id(7, &[2, 0, 2, 3, 0])
+            with_id(7, &[3, 0, 2, 3, 0])
         );
         assert_eq!(
             encode(Command::SetStyle {
@@ -2400,7 +2417,7 @@ mod wire_tests {
                     StyleValue::Length(-2.5, Unit::Rem),
                 ]),
             }),
-            with_id(7, &[4, 0, 4, 2, 3, 0, 0, 192, 63, 3, 3, 0, 0, 32, 192, 4])
+            with_id(7, &[7, 0, 4, 2, 3, 0, 0, 192, 63, 3, 3, 0, 0, 32, 192, 4])
         );
         assert_eq!(
             encode(Command::SetStyle {
@@ -2408,11 +2425,11 @@ mod wire_tests {
                 property: StyleProperty::Height,
                 value:    StyleValue::Number(0.5),
             }),
-            with_id(7, &[3, 0, 5, 0, 0, 0, 63])
+            with_id(7, &[6, 0, 5, 0, 0, 0, 63])
         );
         assert_eq!(
             encode(Command::RemoveStyle { id: id.clone(), property: StyleProperty::Cursor }),
-            with_id(8, &[2, 0])
+            with_id(8, &[3, 0])
         );
         assert_eq!(encode(Command::Focus { id: id.clone() }), with_id(11, &[]));
         assert_eq!(

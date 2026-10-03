@@ -1,66 +1,76 @@
-INIT translate Section-None_Article-Some(1) 0.000 0.000
-INIT z Section-None_Article-Some(1) 0
-INIT translate Section-None_Article-Some(2) 200.000 0.000
-INIT z Section-None_Article-Some(2) 1
-INIT translate Section-None_Article-Some(3) 400.000 0.000
-INIT width Section-None_Article-Some(3) 400
-INIT height Section-None_Article-Some(3) 192
-INIT z Section-None_Article-Some(3) 2
-INIT background Section-None repeating-linear-gradient(to right, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 200.00px), repeating-linear-gradient(to bottom, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 4rem)
-INIT translate Section-None_Article-Some(4) 536.000 224.000
-INIT width Section-None_Article-Some(4) 128
-INIT height Section-None_Article-Some(4) 128
-RESIZE background Section-None repeating-linear-gradient(to right, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 240.00px), repeating-linear-gradient(to bottom, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 4rem)
-RESIZE translate Section-None_Article-Some(1) 0.000 0.000
-RESIZE translate Section-None_Article-Some(2) 240.000 0.000
-RESIZE translate Section-None_Article-Some(3) 480.000 0.000
-RESIZE width Section-None_Article-Some(3) 480
-RESIZE height Section-None_Article-Some(3) 192
-RESIZE translate Section-None_Article-Some(4) 656.000 224.000
-RESIZE width Section-None_Article-Some(4) 128
-RESIZE height Section-None_Article-Some(4) 128
-A_move 0 down z Section-None_Article-Some(3) 3
-A_move 1 move translate Section-None_Article-Some(3) 420.000 0.000
-A_move 2 move translate Section-None_Article-Some(3) 460.000 10.000
-A_move 3 move translate Section-None_Article-Some(3) 520.000 30.000
-A_move 4 move translate Section-None_Article-Some(3) 600.000 50.000
-A_move 4 move addclass Section-None_Article-Some(4) Highlighted
-A_move 5 up translate Section-None_Article-Some(3) 600.000 64.000
-A_move 5 up z Section-None_Article-Some(3) 2
-A_move 5 up removeclass Section-None_Article-Some(4) Highlighted
-B_corner_resize 0 down z Section-None_Article-Some(3) 3
-B_corner_resize 0 down cursor Section-None NwseResize
-B_corner_resize 1 move translate Section-None_Article-Some(3) 400.000 0.000
-B_corner_resize 1 move width Section-None_Article-Some(3) 400
-B_corner_resize 1 move height Section-None_Article-Some(3) 192
-B_corner_resize 2 move translate Section-None_Article-Some(3) 400.000 0.000
-B_corner_resize 2 move width Section-None_Article-Some(3) 400
-B_corner_resize 2 move height Section-None_Article-Some(3) 192
-B_corner_resize 3 move translate Section-None_Article-Some(3) 400.000 0.000
-B_corner_resize 3 move width Section-None_Article-Some(3) 400
-B_corner_resize 3 move height Section-None_Article-Some(3) 256
-B_corner_resize 3 move addclass Section-None_Article-Some(4) Highlighted
-B_corner_resize 4 up cursor Section-None Unset
-B_corner_resize 4 up z Section-None_Article-Some(3) 2
-B_corner_resize 4 up removeclass Section-None_Article-Some(4) Highlighted
-C_drop_zone 0 down z Section-None_Article-Some(3) 3
-C_drop_zone 1 move translate Section-None_Article-Some(3) 410.000 15.000
-C_drop_zone 2 move translate Section-None_Article-Some(3) 420.000 40.000
-C_drop_zone 2 move addclass Section-None_Article-Some(4) Highlighted
-C_drop_zone 3 move translate Section-None_Article-Some(3) 430.000 60.000
-C_drop_zone 4 move translate Section-None_Article-Some(3) 430.000 0.000
-C_drop_zone 4 move removeclass Section-None_Article-Some(4) Highlighted
-C_drop_zone 5 move translate Section-None_Article-Some(3) 430.000 70.000
-C_drop_zone 5 move addclass Section-None_Article-Some(4) Highlighted
-C_drop_zone 6 up translate Section-None_Article-Some(3) 400.000 64.000
-C_drop_zone 6 up z Section-None_Article-Some(3) 2
-C_drop_zone 6 up removeclass Section-None_Article-Some(4) Highlighted
-D_fractional 0 down z Section-None_Article-Some(3) 3
-D_fractional 1 move translate Section-None_Article-Some(3) 415.340 15.680
-D_fractional 2 move translate Section-None_Article-Some(3) 457.760 51.260
-D_fractional 2 move addclass Section-None_Article-Some(4) Highlighted
-D_fractional 3 move translate Section-None_Article-Some(3) 508.560 131.580
-D_fractional 4 move translate Section-None_Article-Some(3) 543.040 186.160
-D_fractional 5 up translate Section-None_Article-Some(3) 400.000 192.000
-D_fractional 5 up z Section-None_Article-Some(3) 2
-D_fractional 5 up removeclass Section-None_Article-Some(4) Highlighted
+INIT translate Main-None_Article-Some(1) 0.000 0.000
+INIT z Main-None_Article-Some(1) 0
+INIT translate Main-None_Article-Some(2) 200.000 0.000
+INIT z Main-None_Article-Some(2) 1
+INIT translate Main-None_Article-Some(3) 400.000 0.000
+INIT width Main-None_Article-Some(3) 400
+INIT height Main-None_Article-Some(3) 192
+INIT z Main-None_Article-Some(3) 2
+INIT background Main-None repeating-linear-gradient(to right, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 200.00px), repeating-linear-gradient(to bottom, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 4rem)
+INIT translate Main-None_Article-Some(4) 536.000 224.000
+INIT width Main-None_Article-Some(4) 128
+INIT height Main-None_Article-Some(4) 128
+RESIZE background Main-None repeating-linear-gradient(to right, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 240.00px), repeating-linear-gradient(to bottom, var(--color-paper-mix) 0px, var(--color-paper-mix) 1px, transparent 1px, transparent 4rem)
+RESIZE translate Main-None_Article-Some(1) 0.000 0.000
+RESIZE translate Main-None_Article-Some(2) 240.000 0.000
+RESIZE translate Main-None_Article-Some(3) 480.000 0.000
+RESIZE width Main-None_Article-Some(3) 480
+RESIZE height Main-None_Article-Some(3) 192
+RESIZE translate Main-None_Article-Some(4) 656.000 224.000
+RESIZE width Main-None_Article-Some(4) 128
+RESIZE height Main-None_Article-Some(4) 128
+A_move 0 down z Main-None_Article-Some(3) 3
+A_move 1 move translate Main-None_Article-Some(3) 420.000 0.000
+A_move 2 move translate Main-None_Article-Some(3) 460.000 10.000
+A_move 3 move translate Main-None_Article-Some(3) 520.000 30.000
+A_move 4 move translate Main-None_Article-Some(3) 600.000 50.000
+A_move 4 move background Main-None_Article-Some(4) var(--color-emphasis-ink)
+A_move 4 move color Main-None_Article-Some(4) var(--color-paper)
+A_move 5 up translate Main-None_Article-Some(3) 600.000 64.000
+A_move 5 up z Main-None_Article-Some(3) 2
+A_move 5 up background Main-None_Article-Some(4) Unset
+A_move 5 up color Main-None_Article-Some(4) Unset
+B_corner_resize 0 down z Main-None_Article-Some(3) 3
+B_corner_resize 0 down cursor Main-None NwseResize
+B_corner_resize 1 move translate Main-None_Article-Some(3) 400.000 0.000
+B_corner_resize 1 move width Main-None_Article-Some(3) 400
+B_corner_resize 1 move height Main-None_Article-Some(3) 192
+B_corner_resize 2 move translate Main-None_Article-Some(3) 400.000 0.000
+B_corner_resize 2 move width Main-None_Article-Some(3) 400
+B_corner_resize 2 move height Main-None_Article-Some(3) 192
+B_corner_resize 3 move translate Main-None_Article-Some(3) 400.000 0.000
+B_corner_resize 3 move width Main-None_Article-Some(3) 400
+B_corner_resize 3 move height Main-None_Article-Some(3) 256
+B_corner_resize 3 move background Main-None_Article-Some(4) var(--color-emphasis-ink)
+B_corner_resize 3 move color Main-None_Article-Some(4) var(--color-paper)
+B_corner_resize 4 up cursor Main-None Unset
+B_corner_resize 4 up z Main-None_Article-Some(3) 2
+B_corner_resize 4 up background Main-None_Article-Some(4) Unset
+B_corner_resize 4 up color Main-None_Article-Some(4) Unset
+C_drop_zone 0 down z Main-None_Article-Some(3) 3
+C_drop_zone 1 move translate Main-None_Article-Some(3) 410.000 15.000
+C_drop_zone 2 move translate Main-None_Article-Some(3) 420.000 40.000
+C_drop_zone 2 move background Main-None_Article-Some(4) var(--color-emphasis-ink)
+C_drop_zone 2 move color Main-None_Article-Some(4) var(--color-paper)
+C_drop_zone 3 move translate Main-None_Article-Some(3) 430.000 60.000
+C_drop_zone 4 move translate Main-None_Article-Some(3) 430.000 0.000
+C_drop_zone 4 move background Main-None_Article-Some(4) Unset
+C_drop_zone 4 move color Main-None_Article-Some(4) Unset
+C_drop_zone 5 move translate Main-None_Article-Some(3) 430.000 70.000
+C_drop_zone 5 move background Main-None_Article-Some(4) var(--color-emphasis-ink)
+C_drop_zone 5 move color Main-None_Article-Some(4) var(--color-paper)
+C_drop_zone 6 up translate Main-None_Article-Some(3) 400.000 64.000
+C_drop_zone 6 up z Main-None_Article-Some(3) 2
+C_drop_zone 6 up background Main-None_Article-Some(4) Unset
+C_drop_zone 6 up color Main-None_Article-Some(4) Unset
+D_fractional 0 down z Main-None_Article-Some(3) 3
+D_fractional 1 move translate Main-None_Article-Some(3) 415.340 15.680
+D_fractional 2 move translate Main-None_Article-Some(3) 457.760 51.260
+D_fractional 2 move background Main-None_Article-Some(4) var(--color-emphasis-ink)
+D_fractional 2 move color Main-None_Article-Some(4) var(--color-paper)
+D_fractional 3 move translate Main-None_Article-Some(3) 508.560 131.580
+D_fractional 4 move translate Main-None_Article-Some(3) 543.040 186.160
+D_fractional 5 up translate Main-None_Article-Some(3) 400.000 192.000
+D_fractional 5 up z Main-None_Article-Some(3) 2
+D_fractional 5 up background Main-None_Article-Some(4) Unset
+D_fractional 5 up color Main-None_Article-Some(4) Unset

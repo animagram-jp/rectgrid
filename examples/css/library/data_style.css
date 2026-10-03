@@ -77,6 +77,12 @@
             [type="search"],
             [type="url"],
             [type="tel"],
+            [type="number"],
+            [type="date"],
+            [type="time"],
+            [type="datetime-local"],
+            [type="month"],
+            [type="week"],
             [type="checkbox"],
             [type="radio"]
         ):not([data-sign], [data-facet], [data-surround]),
@@ -100,6 +106,12 @@
                 [type="search"],
                 [type="url"],
                 [type="tel"],
+                [type="number"],
+                [type="date"],
+                [type="time"],
+                [type="datetime-local"],
+                [type="month"],
+                [type="week"],
                 [type="checkbox"],
                 [type="radio"]
             ):not([data-sign], [data-facet], [data-surround]),
@@ -148,6 +160,49 @@
         color:            inherit;
         vertical-align:   middle;
         width:            auto;
+    }
+
+    /* --- hover, active --- */
+
+    :where(
+        :where(
+            a:any-link,
+            button,
+            [type="button"],
+            [type="submit"],
+            [type="reset"],
+            summary
+        )[data-surround="transparent"],
+        li[role],
+        li > [role]:where(a, button),
+        li > label:has(> input[role]:not(:disabled, [aria-disabled="true"])),
+        [popovertarget]:not([data-surround])
+    ) {
+        &:active {
+            outline-color: var(--color-focus);
+            outline-style: solid;
+        }
+
+        &:where(:user-invalid, [aria-invalid="true"]):active {
+            outline-color: var(--color-error);
+        }
+
+        @media (hover: hover) {
+            &:hover {
+                outline-color: var(--color-focus);
+                outline-style: solid;
+            }
+
+            &:where(:user-invalid, [aria-invalid="true"]):hover {
+                outline-color: var(--color-error);
+            }
+        }
+
+        @media (forced-colors: active) {
+            &:where(:user-invalid, [aria-invalid="true"]):where(:hover, :active) {
+                outline-color: Mark;
+            }
+        }
     }
 
     /* === default inline style (not focusable): nothing to define more  === */
@@ -221,7 +276,8 @@
 
     /* --- invalid --- */
 
-    :where(:user-invalid, [aria-invalid="true"]) {
+    :where(:user-invalid, [aria-invalid="true"]),
+    [data-surround="outline"]:where(:user-invalid, [aria-invalid="true"]) {
         border-color: var(--color-error);
     }
 
@@ -230,7 +286,8 @@
     }
 
     @media (forced-colors: active) {
-        :where(:user-invalid, [aria-invalid="true"]) {
+        :where(:user-invalid, [aria-invalid="true"]),
+        [data-surround="outline"]:where(:user-invalid, [aria-invalid="true"]) {
             border-color: Mark;
         }
 
@@ -275,7 +332,7 @@
     :where(
         a:any-link,
         summary
-    ):where(
+    ):is(
         [data-style="underline"],
         :not([data-surround])
     ):where(:active, [aria-pressed="true"]) {
