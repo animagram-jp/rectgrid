@@ -1,4 +1,6 @@
-# Contributing
+# Development
+
+## Rule
 
 - Follow [ORG_CONTRIBUTING.md](./ORG_CONTRIBUTING.md)
 
