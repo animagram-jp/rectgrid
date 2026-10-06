@@ -1,0 +1,97 @@
+# NOTICE
+
+## design-system-example-components-html
+
+Source: https://github.com/digital-go-jp/design-system-example-components-html
+
+MIT License
+
+Copyright (c) 2025 デジタル庁
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## CUDO: Color Universal Design Recommended Color Set ver.3
+
+Source: https://cudo.jp/wp-content/uploads/2016/07/CUD%E6%8E%A8%E5%A5%A8%E9%85%8D%E8%89%B2%E3%82%BB%E3%83%83%E3%83%88%E3%82%AC%E3%82%A4%E3%83%89%E3%83%96%E3%83%83%E3%82%AF.pdf
+
+License: free to use the color values (no permission/attribution required for using the colors themselves in products, printed matter, or screens). Cite the source when republishing the color values in guidelines/publications/web media. Figures/artwork in the guidebook are copyrighted by the 5 authoring organizations — no unauthorized reproduction or modification.
+
+## CSS resets (examples/css/library/reset.css)
+
+reset.css incorporates parts of the following MIT-licensed works.
+
+- The new CSS reset (version 1.11.3)
+  - Source: https://github.com/elad2412/the-new-css-reset
+  - Copyright (c) 2021 Elad Shechter
+- A (more) Modern CSS Reset
+  - Source: https://github.com/hankchizljaw/modern-css-reset
+  - Copyright (c) 2019 Andy Bell and other contributors
+- kiso.css
+  - Source: https://github.com/tak-dcxi/kiso.css
+  - Copyright (c) tak-dcxi
+- Tailwind CSS (preflight.css)
+  - Source: https://github.com/tailwindlabs/tailwindcss
+  - Copyright (c) Tailwind Labs, Inc.
+
+## Rust crates (linked into examples/app/app_bg.wasm)
+
+Licensed under the MIT License (each is dual-licensed MIT OR Apache-2.0 or MIT-only; MIT is elected). Full texts are in each crate's repository on https://crates.io.
+
+- allocator-api2
+  - Copyright (c) Zakarum
+- arbitrary-int
+  - Copyright (c) 2022 Daniel Lehmann
+- cfg-if
+  - Copyright (c) 2014 Alex Crichton
+- js-sys, wasm-bindgen, wasm-bindgen-futures, wasm-bindgen-shared
+  - Copyright (c) 2014 Alex Crichton; The wasm-bindgen Developers
+- libm
+  - Copyright (c) Alex Crichton, Amanieu d'Antras, Jorge Aparicio, Trevor Gross; portions Copyright © 1993,2004 Sun Microsystems, © 2003-2009 Bruce D. Evans, © 2003-2009 Steven G. Kargl and others (see LICENSE.txt in the libm crate)
+- lock_api
+  - Copyright (c) 2016 The Rust Project Developers
+- once_cell
+  - Copyright (c) Aleksey Kladov
+- scopeguard
+  - Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
+- spinning_top
+  - Copyright (c) 2020 Philipp Oppermann
+- talc
+  - Copyright (c) 2023 Shaun Beautement
+
+The `libm` crate is also a dependency of the rectgrid crate itself.
+
+## MIT License (applies to the CSS resets and Rust crates above)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
