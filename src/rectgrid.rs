@@ -1,13 +1,15 @@
 use alloc::{rc::Rc, vec::Vec};
 use core::{
     array::from_fn,
+    cmp::Ordering,
+    fmt::{self, Debug, Formatter},
     marker::PhantomData,
-    ops::{Add, AddAssign, Deref, Div, Mul, Sub},
+    ops::{Add, AddAssign, Deref, Div, Mul, Neg, Sub, SubAssign},
     primitive::{f64, u32, usize},
     result::Result,
 };
 
-use crate::RectgridError;
+use crate::Error;
 
 #[repr(transparent)]
 pub struct Value<Tag>(f64, PhantomData<Tag>);
@@ -27,6 +29,57 @@ impl<Tag> Value<Tag> {
 
     pub fn get(self) -> f64 {
         self.0
+    }
+}
+
+impl<Tag> Debug for Value<Tag> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Value").field(&self.0).finish()
+    }
+}
+
+impl<Tag> PartialEq for Value<Tag> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<Tag> PartialOrd for Value<Tag> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<Tag> Default for Value<Tag> {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
+impl<Tag> Neg for Value<Tag> {
+    type Output = Value<Tag>;
+    fn neg(self) -> Self::Output {
+        Value::new(-self.0)
+    }
+}
+
+impl<Tag> SubAssign for Value<Tag> {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl<Tag> Mul<Value<Tag>> for f64 {
+    type Output = Value<Tag>;
+    fn mul(self, rhs: Value<Tag>) -> Self::Output {
+        Value::new(self * rhs.0)
+    }
+}
+
+impl<Tag> Div<f64> for Value<Tag> {
+    type Output = Value<Tag>;
+    fn div(self, rhs: f64) -> Self::Output {
+        Value::new(self.0 / rhs)
     }
 }
 
@@ -115,7 +168,7 @@ impl<const D: usize> BBox<D> {
         for d in 0..D {
             if offset[d].get() < 0.0 {
                 base[d] += offset[d];
-                offset[d] = Unit::new(-offset[d].get());
+                offset[d] = -offset[d];
             }
         }
         Self { base, offset }
@@ -170,24 +223,24 @@ impl<const D: usize> BBox<D> {
     }
 }
 
-/// A pointer to a step closure `Fn(u32) -> Result<Px, RectgridError>`; implemented for every such `Deref`.
+/// A pointer to a step closure `Fn(u32) -> Result<Px, Error>`; implemented for every such `Deref`.
 /// The caller picks the pointer: `Rc`, `Arc<dyn Fn(..) + Send + Sync>`, `Box`, `&F`.
 pub trait StepFn {
-    fn step(&self, i: u32) -> Result<Px, RectgridError>;
+    fn step(&self, i: u32) -> Result<Px, Error>;
 }
 
 impl<P> StepFn for P
 where
     P: Deref,
-    P::Target: Fn(u32) -> Result<Px, RectgridError>,
+    P::Target: Fn(u32) -> Result<Px, Error>,
 {
-    fn step(&self, i: u32) -> Result<Px, RectgridError> {
+    fn step(&self, i: u32) -> Result<Px, Error> {
         (**self)(i)
     }
 }
 
 /// Pointer type used when a grid does not name one.
-pub type DefaultSteps = Rc<dyn Fn(u32) -> Result<Px, RectgridError>>;
+pub type DefaultSteps = Rc<dyn Fn(u32) -> Result<Px, Error>>;
 
 pub enum IncrementFunction<P = DefaultSteps> {
     /// Fn(i) = points[i+1] - points[i]
@@ -218,16 +271,21 @@ impl<P: StepFn> IncrementFunction<P> {
     /// assert_eq!(acc.forward(1.0).unwrap().get(), 10.0);
     /// assert_eq!(acc.forward(1.5).unwrap().get(), 20.0);
     ///
-    /// use rectgrid::RectgridError;
+    /// use rectgrid::Error;
     /// let empty: Result<Accumulator, _> = IncrementFunction::VectorList(alloc::vec![]).accumulate();
-    /// assert!(matches!(empty, Err(RectgridError::InvalidDefinition)));
+    /// assert!(matches!(empty, Err(Error::InvalidDefinition)));
     /// ```
-    pub fn accumulate(self) -> Result<Accumulator<P>, RectgridError> {
+    pub fn accumulate(self) -> Result<Accumulator<P>, Error> {
         match self {
-            Self::Scale(s) => Ok(Accumulator::Scale(s)),
+            Self::Scale(s) => {
+                if s.is_nan() {
+                    return Err(Error::InvalidInput);
+                }
+                Ok(Accumulator::Scale(s))
+            }
             Self::VectorList(pxs) => {
                 if pxs.is_empty() {
-                    return Err(RectgridError::InvalidDefinition);
+                    return Err(Error::InvalidDefinition);
                 }
                 Ok(Accumulator::VectorList(pxs))
             }
@@ -237,7 +295,7 @@ impl<P: StepFn> IncrementFunction<P> {
 }
 
 /// Sums the first `floor(x)` steps and interpolates linearly through the next one.
-fn forward_difference_forward<P: StepFn>(f: &P, x: f64) -> Result<Px, RectgridError> {
+fn forward_difference_forward<P: StepFn>(f: &P, x: f64) -> Result<Px, Error> {
     let n = libm::floor(x) as u32;
     let frac = x - n as f64;
     let mut acc = Px::new(0.0);
@@ -257,13 +315,20 @@ fn forward_difference_forward<P: StepFn>(f: &P, x: f64) -> Result<Px, RectgridEr
 /// Cost is one call of f per segment up to the answer; an unbounded f whose sum never reaches target
 /// is scanned up to u32::MAX segments.
 /// Caller contract: f must be monotonically non-decreasing over Unit >= 0, matching IncrementFunction::ForwardDifference.
-fn forward_difference_inverse<P: StepFn>(f: &P, target: Px) -> Result<Unit, RectgridError> {
+fn forward_difference_inverse<P: StepFn>(f: &P, target: Px) -> Result<Unit, Error> {
     let target = target.get();
     if !target.is_finite() {
-        return Err(RectgridError::InvalidDefinition);
+        return Err(Error::InvalidInput);
     }
-    if target <= 0.0 {
+    if target == 0.0 {
         return Ok(Unit::new(0.0));
+    }
+    if target < 0.0 {
+        let step = f.step(0)?.get();
+        if step == 0.0 {
+            return Err(Error::OutOfIndex(0));
+        }
+        return Ok(Unit::new(target / step));
     }
 
     let mut accumulated = 0.0;
@@ -283,7 +348,7 @@ fn forward_difference_inverse<P: StepFn>(f: &P, target: Px) -> Result<Unit, Rect
         }
         accumulated = next;
     }
-    Err(RectgridError::OutOfIndex(u32::MAX))
+    Err(Error::OutOfIndex(u32::MAX))
 }
 
 /// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
@@ -294,18 +359,24 @@ pub enum Accumulator<P = DefaultSteps> {
 }
 
 impl<P: StepFn> Accumulator<P> {
-    pub fn forward(&self, x: f64) -> Result<Px, RectgridError> {
+    pub fn forward(&self, x: f64) -> Result<Px, Error> {
+        if x.is_nan() {
+            return Err(Error::InvalidInput);
+        }
         match self {
             Self::Scale(s) => Ok(Px::new(s * x)),
             Self::VectorList(pxs) => {
                 let last = (pxs.len() - 1) as u32;
+                if x < 0.0 {
+                    return Err(Error::OutOfIndex(0));
+                }
                 let n = libm::floor(x) as usize;
                 let frac = x - n as f64;
-                let lo = *pxs.get(n).ok_or(RectgridError::OutOfIndex(last))?;
+                let lo = *pxs.get(n).ok_or(Error::OutOfIndex(last))?;
                 if frac == 0.0 {
                     return Ok(lo);
                 }
-                let hi = *pxs.get(n + 1).ok_or(RectgridError::OutOfIndex(last))?;
+                let hi = *pxs.get(n + 1).ok_or(Error::OutOfIndex(last))?;
                 Ok(lo + (hi - lo) * frac)
             }
             Self::ForwardDifference(f) => forward_difference_forward(f, x),
@@ -313,7 +384,10 @@ impl<P: StepFn> Accumulator<P> {
     }
 
     /// px coordinate -> unit coordinate. For every variant, `inverse(forward(k))` is exactly the integer `k`.
-    pub fn inverse(&self, target: Px) -> Result<Unit, RectgridError> {
+    pub fn inverse(&self, target: Px) -> Result<Unit, Error> {
+        if target.get().is_nan() {
+            return Err(Error::InvalidInput);
+        }
         match self {
             Self::Scale(s) => {
                 // the quotient can miss an integer by an ulp (0.3 / 0.1 = 2.9999999999999996)
@@ -328,11 +402,14 @@ impl<P: StepFn> Accumulator<P> {
 }
 
 /// Inverse for VectorList: `partition_point` over the (non-empty, non-decreasing) array, then a linear solve in the located segment.
-fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, RectgridError> {
+fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, Error> {
     let last = (pxs.len() - 1) as u32;
     let t = target.get();
-    if t < pxs[0].get() || t > pxs[pxs.len() - 1].get() {
-        return Err(RectgridError::OutOfIndex(last));
+    if t < pxs[0].get() {
+        return Err(Error::OutOfIndex(0));
+    }
+    if t > pxs[pxs.len() - 1].get() {
+        return Err(Error::OutOfIndex(last));
     }
     let n = pxs.partition_point(|p| p.get() < t).saturating_sub(1);
     let lo = pxs[n].get();
@@ -353,10 +430,7 @@ pub struct RectGrid<const D: usize, P = DefaultSteps> {
 }
 
 impl<const D: usize, P: StepFn> RectGrid<D, P> {
-    pub fn new(
-        origin: [Px; D],
-        definitions: [IncrementFunction<P>; D],
-    ) -> Result<Self, RectgridError> {
+    pub fn new(origin: [Px; D], definitions: [IncrementFunction<P>; D]) -> Result<Self, Error> {
         let accumulator: Vec<_> =
             definitions.into_iter().map(|d| d.accumulate()).collect::<Result<_, _>>()?;
         let accumulator = match accumulator.try_into() {
@@ -379,7 +453,7 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
         &mut self,
         definition: IncrementFunction<P>,
         d: usize,
-    ) -> Result<(), RectgridError> {
+    ) -> Result<(), Error> {
         self.accumulator[d] = definition.accumulate()?;
         Ok(())
     }
@@ -394,11 +468,11 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// let result = grid.point_to_unit([Px::new(25.0)]);
     /// assert!((result[0].unwrap().get() - 2.5).abs() < 1e-6);
     /// ```
-    pub fn point_to_unit(&self, point: [Px; D]) -> [Result<Unit, RectgridError>; D] {
+    pub fn point_to_unit(&self, point: [Px; D]) -> [Result<Unit, Error>; D] {
         from_fn(|i| self.px_to_unit_axis(i, point[i] - self.origin[i]))
     }
 
-    fn px_to_unit_axis(&self, i: usize, target: Px) -> Result<Unit, RectgridError> {
+    fn px_to_unit_axis(&self, i: usize, target: Px) -> Result<Unit, Error> {
         self.accumulator[i].inverse(target)
     }
 
@@ -409,7 +483,7 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// let grid = RectGrid::<1>::new([Px::new(0.0)], [IncrementFunction::Scale(200.0)]).unwrap();
     /// assert_eq!(grid.unit_to_px(0, &Unit::new(2.25)).unwrap().get(), 450.0);
     /// ```
-    pub fn unit_to_px(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
+    pub fn unit_to_px(&self, d: usize, unit: &Unit) -> Result<Px, Error> {
         self.accumulator[d].forward(unit.get())
     }
 
@@ -419,7 +493,7 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// ```
     /// extern crate alloc;
     /// use rectgrid::{RectGrid, IncrementFunction, Px, Unit};
-    /// use rectgrid::RectgridError;
+    /// use rectgrid::Error;
     /// let grid = RectGrid::<2>::new(
     ///     [Px::new(0.0), Px::new(0.0)],
     ///     [
@@ -432,16 +506,16 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// assert_eq!(px[0][1].as_ref().unwrap().get(), 5.0);
     /// // the 2nd point's second axis exceeds the VectorList's domain (0..=1): only that axis is Err
     /// assert_eq!(px[1][0].as_ref().unwrap().get(), 200.0);
-    /// assert!(matches!(px[1][1], Err(RectgridError::OutOfIndex(1))));
+    /// assert!(matches!(px[1][1], Err(Error::OutOfIndex(1))));
     /// ```
-    pub fn point_as_px(&self, points: &[Point<D>]) -> Vec<[Result<Px, RectgridError>; D]> {
+    pub fn point_as_px(&self, points: &[Point<D>]) -> Vec<[Result<Px, Error>; D]> {
         points.iter().map(|pt| from_fn(|d| self.unit_to_px(d, &pt[d]))).collect()
     }
 
     /// unit_to_px for an `extend` edge: past the end of a finite domain the edge is clipped at the last valid unit.
-    fn unit_to_px_clipped(&self, d: usize, unit: &Unit) -> Result<Px, RectgridError> {
+    fn unit_to_px_clipped(&self, d: usize, unit: &Unit) -> Result<Px, Error> {
         match self.unit_to_px(d, unit) {
-            Err(RectgridError::OutOfIndex(last)) => self.accumulator[d].forward(last as f64),
+            Err(Error::OutOfIndex(last)) => self.accumulator[d].forward(last as f64),
             other => other,
         }
     }
@@ -590,12 +664,8 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// let parameter = grid.get_parameter([Px::new(100.0), Px::new(0.0)], bx);
     /// assert!((parameter[0].as_ref().unwrap().get() - (-0.5)).abs() < 1e-9);
     /// ```
-    pub fn get_parameter(
-        &self,
-        point: [Px; D],
-        bx: BBox<D>,
-    ) -> [Result<Parameter, RectgridError>; D] {
-        from_fn(|d| -> Result<Parameter, RectgridError> {
+    pub fn get_parameter(&self, point: [Px; D], bx: BBox<D>) -> [Result<Parameter, Error>; D] {
+        from_fn(|d| -> Result<Parameter, Error> {
             let base = self.unit_to_px(d, &bx.base[d])?;
             let far = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))?;
             Ok(Self::parameter_axis(point[d] - self.origin[d], base, far))
@@ -616,11 +686,11 @@ impl<const D: usize, P: StepFn> RectGrid<D, P> {
     /// assert_eq!(base_px.get(), 100.0);
     /// assert_eq!(offset_px.get(), 200.0);
     /// ```
-    pub fn box_as_px(&self, boxes: &[BBox<D>]) -> Vec<[Result<(Px, Px), RectgridError>; D]> {
+    pub fn box_as_px(&self, boxes: &[BBox<D>]) -> Vec<[Result<(Px, Px), Error>; D]> {
         boxes
             .iter()
             .map(|bx| {
-                from_fn(|d| -> Result<(Px, Px), RectgridError> {
+                from_fn(|d| -> Result<(Px, Px), Error> {
                     let base = self.unit_to_px(d, &bx.base[d])?;
                     let far = self.unit_to_px(d, &(bx.base[d] + bx.offset[d]))?;
                     Ok((base, far - base))
@@ -745,7 +815,7 @@ pub fn drag_resize<const D: usize, P: StepFn>(
     pointer: [Px; D],
     bx: &BBox<D>,
     corner: [Option<bool>; D],
-) -> Result<BBox<D>, RectgridError> {
+) -> Result<BBox<D>, Error> {
     let unit = grid.point_to_unit(pointer);
     let mut resized = *bx;
     for d in 0..D {
@@ -810,7 +880,7 @@ pub fn snap_bbox_to_unit<const D: usize, P: StepFn>(
     drag_offset: [Px; D],
     bx: &BBox<D>,
     extend: Option<[Unit; D]>,
-) -> Result<BBox<D>, RectgridError> {
+) -> Result<BBox<D>, Error> {
     let mut snapped = *bx;
     for d in 0..D {
         let local = pointer[d] - grid.origin[d] - drag_offset[d];
@@ -841,7 +911,7 @@ pub fn snap_point_to_unit<const D: usize, P: StepFn>(
     pointer: [Px; D],
     drag_offset: [Px; D],
     snap: [Unit; D],
-) -> Result<BBox<D>, RectgridError> {
+) -> Result<BBox<D>, Error> {
     let mut base: Point<D> = [Unit::new(0.0); D];
     for d in 0..D {
         let local = pointer[d] - grid.origin[d] - drag_offset[d];
@@ -901,7 +971,7 @@ mod tests {
         )
         .unwrap();
         let result = grid.point_to_unit([Px::new(100.0)]);
-        assert!(matches!(result[0], Err(RectgridError::OutOfIndex(3))));
+        assert!(matches!(result[0], Err(Error::OutOfIndex(3))));
     }
 
     #[test]
@@ -946,8 +1016,8 @@ mod tests {
         assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
         assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 2.0);
         assert!((acc.inverse(Px::new(20.0)).unwrap().get() - 1.5).abs() < 1e-9);
-        assert!(matches!(acc.inverse(Px::new(-1.0)), Err(RectgridError::OutOfIndex(2))));
-        assert!(matches!(acc.inverse(Px::new(31.0)), Err(RectgridError::OutOfIndex(2))));
+        assert!(matches!(acc.inverse(Px::new(-1.0)), Err(Error::OutOfIndex(0))));
+        assert!(matches!(acc.inverse(Px::new(31.0)), Err(Error::OutOfIndex(2))));
     }
 
     #[test]
@@ -977,7 +1047,7 @@ mod tests {
         )
         .unwrap();
         let boxes = alloc::vec![BBox { base: [Unit::new(0.0)], offset: [Unit::new(5.0)] }];
-        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(RectgridError::OutOfIndex(1))));
+        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(Error::OutOfIndex(1))));
     }
 
     #[test]
@@ -1058,20 +1128,20 @@ mod tests {
         assert_eq!(resized.base[0].get(), 3.0);
         assert_eq!(resized.offset[0].get(), 1.0);
     }
-    type Steps = Rc<dyn Fn(u32) -> Result<Px, RectgridError>>;
+    type Steps = Rc<dyn Fn(u32) -> Result<Px, Error>>;
 
     /// A non-uniform increment (1.0 ... 1.016) that has no closed form.
-    fn wavy(k: u32) -> Result<Px, RectgridError> {
+    fn wavy(k: u32) -> Result<Px, Error> {
         Ok(Px::new(1.0 + libm::fabs(libm::sin(k as f64 * 0.37)) * 0.01 + 1e-3 * (k % 7) as f64))
     }
 
     /// 1.0001^k: monotonically growing steps.
-    fn growing(k: u32) -> Result<Px, RectgridError> {
+    fn growing(k: u32) -> Result<Px, Error> {
         Ok(Px::new(libm::pow(1.0001, k as f64)))
     }
 
     /// Hashed steps in [0.5, 1.5): irregular, deterministic.
-    fn irregular(k: u32) -> Result<Px, RectgridError> {
+    fn irregular(k: u32) -> Result<Px, Error> {
         let mut z = (k as u64).wrapping_add(0x9E3779B97F4A7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
@@ -1131,7 +1201,7 @@ mod tests {
         assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
         assert_eq!(acc.inverse(Px::new(10.0)).unwrap().get(), 1.0);
         assert_eq!(acc.inverse(Px::new(0.0)).unwrap().get(), 0.0);
-        assert_eq!(acc.inverse(Px::new(-5.0)).unwrap().get(), 0.0);
+        assert_eq!(acc.inverse(Px::new(-5.0)).unwrap().get(), -0.5);
     }
 
     /// Steps 10, 0, 10: px 10 is reached at unit 1 and held until unit 2; the inverse returns the start of the plateau.
@@ -1145,12 +1215,72 @@ mod tests {
     /// Three steps of 10 (domain 0..=3); the closure reports OutOfIndex(3) past the end.
     #[test]
     fn forward_difference_inverse_finite_domain_boundaries() {
-        let acc = accumulator(Rc::new(|k| {
-            if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
-        }));
+        let acc =
+            accumulator(Rc::new(
+                |k| {
+                    if k < 3 { Ok(Px::new(10.0)) } else { Err(Error::OutOfIndex(3)) }
+                },
+            ));
         assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
         assert_eq!(acc.inverse(Px::new(30.0)).unwrap().get(), 3.0);
-        assert!(matches!(acc.inverse(Px::new(30.5)), Err(RectgridError::OutOfIndex(3))));
+        assert!(matches!(acc.inverse(Px::new(30.5)), Err(Error::OutOfIndex(3))));
+    }
+
+    #[test]
+    fn nan_is_rejected_as_invalid_input_for_every_definition() {
+        let steps: DefaultSteps = Rc::new(|_| Ok(Px::new(1.0)));
+        let defs = [
+            IncrementFunction::Scale(2.0),
+            IncrementFunction::VectorList(alloc::vec![Px::new(0.0), Px::new(1.0)]),
+            IncrementFunction::ForwardDifference(steps),
+        ];
+        for def in defs {
+            let acc = def.accumulate().unwrap();
+            assert!(matches!(acc.forward(f64::NAN), Err(Error::InvalidInput)));
+            assert!(matches!(acc.inverse(Px::new(f64::NAN)), Err(Error::InvalidInput)));
+        }
+        let nan_scale: Result<Accumulator, _> = IncrementFunction::Scale(f64::NAN).accumulate();
+        assert!(matches!(nan_scale, Err(Error::InvalidInput)));
+    }
+
+    #[test]
+    fn forward_difference_negative_side_round_trips_through_the_first_step() {
+        let acc = accumulator(Rc::new(|i| Ok(Px::new((i + 1) as f64 * 10.0))));
+        for x in [-0.5, -1.0, -3.25] {
+            let px = acc.forward(x).unwrap();
+            assert_eq!(px.get(), 10.0 * x);
+            assert!((acc.inverse(px).unwrap().get() - x).abs() < 1e-12);
+        }
+        let flat = accumulator(Rc::new(|_| Ok(Px::new(0.0))));
+        assert!(matches!(flat.inverse(Px::new(-1.0)), Err(Error::OutOfIndex(0))));
+        assert_eq!(flat.inverse(Px::new(0.0)).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn value_supports_comparison_debug_and_sign_operations() {
+        use alloc::format;
+        let a = Px::new(1.5);
+        let b = Px::new(2.5);
+        assert!(a < b && b > a && a <= a && a != b);
+        assert_eq!(a, Px::new(1.5));
+        assert_eq!(Px::default(), Px::new(0.0));
+        assert_eq!(-a, Px::new(-1.5));
+        assert_eq!(2.0 * a, Px::new(3.0));
+        assert_eq!(b / 2.0, Px::new(1.25));
+        let mut c = b;
+        c -= a;
+        assert_eq!(c, Px::new(1.0));
+        assert_eq!(format!("{:?}", a), "Value(1.5)");
+        assert_eq!(Px::new(f64::NAN).partial_cmp(&a), None);
+        assert!(Px::new(f64::NAN) != Px::new(f64::NAN));
+    }
+
+    #[test]
+    fn scale_accepts_negative_and_infinite_values() {
+        let acc = IncrementFunction::<DefaultSteps>::Scale(-2.0).accumulate().unwrap();
+        assert_eq!(acc.forward(3.0).unwrap().get(), -6.0);
+        assert_eq!(acc.inverse(Px::new(-6.0)).unwrap().get(), 3.0);
+        assert_eq!(acc.forward(f64::INFINITY).unwrap().get(), f64::NEG_INFINITY);
     }
 
     /// A non-finite target is rejected (an unbounded closure would be scanned for u32::MAX segments).
@@ -1158,7 +1288,7 @@ mod tests {
     fn forward_difference_inverse_rejects_non_finite_targets() {
         let acc = accumulator(Rc::new(|_| Ok(Px::new(1.0))));
         for target in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(matches!(acc.inverse(Px::new(target)), Err(RectgridError::InvalidDefinition)));
+            assert!(matches!(acc.inverse(Px::new(target)), Err(Error::InvalidInput)));
         }
     }
 
@@ -1180,7 +1310,7 @@ mod tests {
     fn arc_pointer_makes_the_grid_send_and_sync() {
         use alloc::sync::Arc;
 
-        type SyncSteps = Arc<dyn Fn(u32) -> Result<Px, RectgridError> + Send + Sync>;
+        type SyncSteps = Arc<dyn Fn(u32) -> Result<Px, Error> + Send + Sync>;
 
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<RectGrid<2, SyncSteps>>();
@@ -1227,7 +1357,7 @@ mod tests {
     fn hit_test_box_straddling_the_domain_end_is_not_evaluable() {
         let grid = vector_list_grid(&[0.0, 10.0]);
         let boxes = alloc::vec![unit_box(0.5, 1.0)];
-        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(RectgridError::OutOfIndex(1))));
+        assert!(matches!(grid.box_as_px(&boxes)[0][0], Err(Error::OutOfIndex(1))));
         assert_eq!(grid.hit_test([Px::new(7.0)], &boxes, None), None);
     }
 
@@ -1236,7 +1366,7 @@ mod tests {
         let grid = vector_list_grid(&[0.0, 10.0]);
         for bx in [unit_box(5.0, 1.0), unit_box(0.5, 1.0)] {
             let parameter = grid.get_parameter([Px::new(5.0)], bx);
-            assert!(matches!(parameter[0], Err(RectgridError::OutOfIndex(1))));
+            assert!(matches!(parameter[0], Err(Error::OutOfIndex(1))));
         }
         let parameter = grid.get_parameter([Px::new(5.0)], unit_box(0.0, 1.0));
         assert_eq!(parameter[0].as_ref().unwrap().get(), 0.5);
@@ -1270,13 +1400,24 @@ mod tests {
         assert_eq!(parameter[0].get(), 0.5);
     }
 
+    #[test]
+    fn vector_list_below_the_start_is_out_of_index_zero_and_extend_clips_there() {
+        let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
+        assert!(matches!(grid.unit_to_px(0, &Unit::new(-0.5)), Err(Error::OutOfIndex(0))));
+        assert!(matches!(grid.point_to_unit([Px::new(-1.0)])[0], Err(Error::OutOfIndex(0))));
+        let boxes = alloc::vec![unit_box(0.0, 1.0)];
+        let extend = Some(([Unit::new(-5.0)], [Unit::new(0.0)]));
+        assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), Some(0));
+        assert_eq!(grid.hit_test([Px::new(-1.0)], &boxes, extend), None);
+    }
+
     /// Three steps of 10 (domain 0..=3); extend is clipped at the domain end and a boundary box starting beyond it is not evaluable.
     #[test]
     fn hit_test_extend_is_clipped_for_forward_difference_domains() {
         let grid = RectGrid::<1>::new(
             [Px::new(0.0)],
             [IncrementFunction::ForwardDifference(Rc::new(|k| {
-                if k < 3 { Ok(Px::new(10.0)) } else { Err(RectgridError::OutOfIndex(3)) }
+                if k < 3 { Ok(Px::new(10.0)) } else { Err(Error::OutOfIndex(3)) }
             }))],
         )
         .unwrap();
@@ -1315,16 +1456,14 @@ mod tests {
     fn hit_test_other_evaluation_errors_also_mean_not_evaluable() {
         let grid = RectGrid::<1>::new(
             [Px::new(0.0)],
-            [IncrementFunction::ForwardDifference(Rc::new(|_| {
-                Err(RectgridError::InvalidDefinition)
-            }))],
+            [IncrementFunction::ForwardDifference(Rc::new(|_| Err(Error::InvalidDefinition)))],
         )
         .unwrap();
         let boxes = alloc::vec![unit_box(1.0, 1.0)];
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, None), None);
         assert!(matches!(
             grid.get_parameter([Px::new(0.0)], boxes[0])[0],
-            Err(RectgridError::InvalidDefinition)
+            Err(Error::InvalidDefinition)
         ));
         let extend = Some(([Unit::new(0.0)], [Unit::new(1.0)]));
         assert_eq!(grid.hit_test([Px::new(0.0)], &boxes, extend), None);
@@ -1422,7 +1561,7 @@ mod tests {
     #[test]
     fn a_failed_axis_can_be_clamped_with_the_last_index_it_reports() {
         let grid = vector_list_grid(&[0.0, 10.0, 30.0]);
-        let Err(RectgridError::OutOfIndex(last)) = grid.unit_to_px(0, &Unit::new(7.0)) else {
+        let Err(Error::OutOfIndex(last)) = grid.unit_to_px(0, &Unit::new(7.0)) else {
             panic!("expected OutOfIndex");
         };
         assert_eq!(last, 2);

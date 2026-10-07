@@ -10,18 +10,20 @@ pub mod geometry;
 pub use rectgrid::*;
 
 #[derive(Debug, Clone, Copy)]
-pub enum RectgridError {
+pub enum Error {
     OutOfIndex(u32),
     InvalidDefinition,
+    InvalidInput,
 }
 
-impl Display for RectgridError {
+impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
-            RectgridError::OutOfIndex(last) => {
+            Error::OutOfIndex(last) => {
                 write!(f, "out of index: last valid index is {}", last)
             }
-            RectgridError::InvalidDefinition => write!(f, "invalid definition"),
+            Error::InvalidDefinition => write!(f, "invalid definition"),
+            Error::InvalidInput => write!(f, "invalid input"),
         }
     }
 }

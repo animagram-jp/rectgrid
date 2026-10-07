@@ -3,7 +3,11 @@ use core::primitive::{f64, usize};
 
 use libm;
 
-use crate::{Parameter, Point, Unit};
+use crate::{Error, Parameter, Point, Unit};
+
+fn reject_nan(values: &[f64]) -> Result<(), Error> {
+    if values.iter().any(|v| v.is_nan()) { Err(Error::InvalidInput) } else { Ok(()) }
+}
 
 pub struct Line<const D: usize> {
     pub start: Point<D>,
@@ -15,17 +19,18 @@ pub struct Line<const D: usize> {
 /// use rectgrid::geometry::*;
 ///
 /// let line = Line { start: [Unit::new(0.0), Unit::new(0.0)], end: [Unit::new(10.0), Unit::new(0.0)] };
-/// let result = as_on_line([Unit::new(5.0), Unit::new(5.0)], line);
+/// let result = as_on_line([Unit::new(5.0), Unit::new(5.0)], line).unwrap();
 /// assert_eq!(result.t.get(), 0.5);
 /// assert_eq!(result.signed_distance.get().abs(), 5.0);
 /// ```
-pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
+pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> Result<PointOnGeometry<2>, Error> {
     let px = point[0].get();
     let py = point[1].get();
     let x1 = line.start[0].get();
     let y1 = line.start[1].get();
     let x2 = line.end[0].get();
     let y2 = line.end[1].get();
+    reject_nan(&[px, py, x1, y1, x2, y2])?;
 
     let vx = x2 - x1;
     let vy = y2 - y1;
@@ -46,11 +51,11 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> PointOnGeometry<2> {
         if cross == 0.0 { 0.0 } else { cross / libm::sqrt(length_squared) }
     };
 
-    PointOnGeometry {
+    Ok(PointOnGeometry {
         t:               Parameter::new(t),
         projected:       [Unit::new(proj_x), Unit::new(proj_y)],
         signed_distance: Unit::new(signed_distance),
-    }
+    })
 }
 
 pub struct Circle<const D: usize> {
@@ -67,17 +72,18 @@ impl Circle<2> {
     ///     [Unit::new(0.0), Unit::new(1.0)],
     ///     [Unit::new(1.0), Unit::new(0.0)],
     ///     [Unit::new(0.0), Unit::new(-1.0)],
-    /// ).unwrap();
+    /// ).unwrap().unwrap();
     /// assert!((result.center[0].get()).abs() < 1e-8);
     /// assert!((result.center[1].get()).abs() < 1e-8);
     /// assert!((result.radius.get() - 1.0).abs() < 1e-8);
     /// ```
-    pub fn from_three_points(a: Point<2>, b: Point<2>, c: Point<2>) -> Option<Self> {
+    pub fn from_three_points(a: Point<2>, b: Point<2>, c: Point<2>) -> Result<Option<Self>, Error> {
         // collinear when cross <= RELATIVE_EPSILON * longest_side², which is scale-invariant
         const RELATIVE_EPSILON: f64 = 1e-12;
 
         let ax = a[0].get();
         let ay = a[1].get();
+        reject_nan(&[ax, ay, b[0].get(), b[1].get(), c[0].get(), c[1].get()])?;
         // solve relative to `a` so roundoff follows the point differences (Shewchuk, 1999)
         let bx = b[0].get() - ax;
         let by = b[1].get() - ay;
@@ -91,7 +97,7 @@ impl Circle<2> {
 
         let cross = bx * cy - by * cx;
         if cross.abs() <= RELATIVE_EPSILON * longest_sq {
-            return None;
+            return Ok(None);
         }
 
         let denominator = 2.0 * cross;
@@ -100,10 +106,10 @@ impl Circle<2> {
 
         let radius = libm::sqrt(center_x * center_x + center_y * center_y);
 
-        Some(Circle {
+        Ok(Some(Circle {
             center: [Unit::new(ax + center_x), Unit::new(ay + center_y)],
             radius: Unit::new(radius),
-        })
+        }))
     }
 }
 
@@ -112,15 +118,16 @@ impl Circle<2> {
 /// use rectgrid::geometry::*;
 ///
 /// let circle = Circle { center: [Unit::new(0.0), Unit::new(0.0)], radius: Unit::new(5.0) };
-/// let result = as_on_circle([Unit::new(0.0), Unit::new(0.0)], circle);
+/// let result = as_on_circle([Unit::new(0.0), Unit::new(0.0)], circle).unwrap();
 /// assert_eq!(result.signed_distance.get(), -5.0);
 /// ```
-pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> PointOnGeometry<2> {
+pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> Result<PointOnGeometry<2>, Error> {
     let px = point[0].get();
     let py = point[1].get();
     let cx = circle.center[0].get();
     let cy = circle.center[1].get();
     let radius = circle.radius.get();
+    reject_nan(&[px, py, cx, cy, radius])?;
 
     let dx = px - cx;
     let dy = py - cy;
@@ -135,11 +142,11 @@ pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> PointOnGeometry<2> {
         (cx + dx * scale, cy + dy * scale)
     };
 
-    PointOnGeometry {
+    Ok(PointOnGeometry {
         t:               Parameter::new(t),
         projected:       [Unit::new(proj_x), Unit::new(proj_y)],
         signed_distance: Unit::new(distance_from_center - radius),
-    }
+    })
 }
 
 pub struct Ellipse<const D: usize> {
@@ -157,27 +164,28 @@ pub struct Ellipse<const D: usize> {
 /// use rectgrid::geometry::*;
 ///
 /// let ellipse = Ellipse { center: [Unit::new(0.0), Unit::new(0.0)], rx: Unit::new(4.0), ry: Unit::new(3.0) };
-/// let result = as_on_ellipse([Unit::new(8.0), Unit::new(0.0)], ellipse);
+/// let result = as_on_ellipse([Unit::new(8.0), Unit::new(0.0)], ellipse).unwrap();
 /// assert_eq!(result.signed_distance.get(), 4.0);
 /// ```
-pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2> {
+pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> Result<PointOnGeometry<2>, Error> {
     let px = point[0].get();
     let py = point[1].get();
     let cx = ellipse.center[0].get();
     let cy = ellipse.center[1].get();
     let rx = ellipse.rx.get();
     let ry = ellipse.ry.get();
+    reject_nan(&[px, py, cx, cy, rx, ry])?;
 
     let raw_dx = px - cx;
     let raw_dy = py - cy;
 
     if rx == 0.0 || ry == 0.0 {
         let distance = libm::sqrt(raw_dx * raw_dx + raw_dy * raw_dy);
-        return PointOnGeometry {
+        return Ok(PointOnGeometry {
             t:               Parameter::new(libm::atan2(raw_dy, raw_dx)),
             projected:       [Unit::new(cx), Unit::new(cy)],
             signed_distance: Unit::new(distance),
-        };
+        });
     }
 
     let rx = rx.abs();
@@ -199,11 +207,11 @@ pub fn as_on_ellipse(point: [Unit; 2], ellipse: Ellipse<2>) -> PointOnGeometry<2
     let signed_distance =
         if ratio0 * ratio0 + ratio1 * ratio1 < 1.0 { -distance } else { distance };
 
-    PointOnGeometry {
+    Ok(PointOnGeometry {
         t:               Parameter::new(libm::atan2(foot_y / ry, foot_x / rx)),
         projected:       [Unit::new(cx + foot_x), Unit::new(cy + foot_y)],
         signed_distance: Unit::new(signed_distance),
-    }
+    })
 }
 
 /// Below this, `e1 * y1` is near the subnormal range and the root `u >= e1 * y1` loses precision, so the
@@ -363,16 +371,25 @@ pub struct Polygon<const D: usize> {
 ///     [Unit::new(10.0), Unit::new(0.0)],
 ///     [Unit::new(10.0), Unit::new(10.0)],
 /// ] };
-/// let (result, edge_index) = as_on_polygon([Unit::new(5.0), Unit::new(-2.0)], polygon);
+/// let (result, edge_index) = as_on_polygon([Unit::new(5.0), Unit::new(-2.0)], polygon).unwrap();
 /// assert_eq!(result.signed_distance.get(), 2.0);
 /// assert_eq!(edge_index, 0);
 /// ```
-pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<2>, usize) {
+pub fn as_on_polygon(
+    point: [Unit; 2],
+    polygon: Polygon<2>,
+) -> Result<(PointOnGeometry<2>, usize), Error> {
     let n = polygon.vertices.len();
-    assert!(n >= 3, "polygon must have at least 3 vertices");
+    if n < 3 {
+        return Err(Error::InvalidInput);
+    }
 
     let px = point[0].get();
     let py = point[1].get();
+    reject_nan(&[px, py])?;
+    for v in &polygon.vertices {
+        reject_nan(&[v[0].get(), v[1].get()])?;
+    }
     let vertex = |i: usize| -> (f64, f64) {
         let v = polygon.vertices[i % n];
         (v[0].get(), v[1].get())
@@ -444,14 +461,14 @@ pub fn as_on_polygon(point: [Unit; 2], polygon: Polygon<2>) -> (PointOnGeometry<
         -distance
     };
 
-    (
+    Ok((
         PointOnGeometry {
             t: Parameter::new(best_t),
             projected,
             signed_distance: Unit::new(signed_distance),
         },
         best_edge,
-    )
+    ))
 }
 
 pub struct PointOnGeometry<const D: usize> {
@@ -473,47 +490,48 @@ mod tests {
     #[test]
     fn as_on_line_returns_zero_when_point_lies_on_segment() {
         let line = Line { start: p(-5.0, -5.0), end: p(5.0, 5.0) };
-        let result = as_on_line(p(0.0, 0.0), line);
+        let result = as_on_line(p(0.0, 0.0), line).unwrap();
         assert!(result.signed_distance.get().abs() < 1e-8);
     }
 
     #[test]
     fn as_on_line_handles_zero_length_segment() {
         let line = Line { start: p(2.0, 2.0), end: p(2.0, 2.0) };
-        let result = as_on_line(p(5.0, 6.0), line);
+        let result = as_on_line(p(5.0, 6.0), line).unwrap();
         assert_eq!(result.signed_distance.get().abs(), 5.0);
     }
 
     #[test]
     fn as_on_line_t_outside_zero_one_means_beyond_segment() {
         let line = Line { start: p(0.0, 0.0), end: p(10.0, 0.0) };
-        let result = as_on_line(p(-5.0, 0.0), line);
+        let result = as_on_line(p(-5.0, 0.0), line).unwrap();
         assert!(result.t.get() < 0.0);
     }
 
     #[test]
     fn as_on_circle_negative_coordinates_and_decimals() {
         let circle = Circle { center: p(-4.0, 4.0), radius: Unit::new(5.0) };
-        let result = as_on_circle(p(1.0, 4.0), circle);
+        let result = as_on_circle(p(1.0, 4.0), circle).unwrap();
         assert!(result.signed_distance.get().abs() < 1e-8);
     }
 
     #[test]
     fn as_on_circle_outside_is_positive() {
         let circle = Circle { center: p(0.0, 0.0), radius: Unit::new(5.0) };
-        let result = as_on_circle(p(10.0, 0.0), circle);
+        let result = as_on_circle(p(10.0, 0.0), circle).unwrap();
         assert_eq!(result.signed_distance.get(), 5.0);
     }
 
     #[test]
     fn from_three_points_returns_none_for_colinear_points() {
-        let result = Circle::from_three_points(p(0.0, 0.0), p(1.0, 1.0), p(2.0, 2.0));
+        let result = Circle::from_three_points(p(0.0, 0.0), p(1.0, 1.0), p(2.0, 2.0)).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn from_three_points_handles_matching_y_on_first_and_third_point() {
-        let result = Circle::from_three_points(p(0.0, 0.0), p(1.0, 3.0), p(4.0, 0.0)).unwrap();
+        let result =
+            Circle::from_three_points(p(0.0, 0.0), p(1.0, 3.0), p(4.0, 0.0)).unwrap().unwrap();
         assert!((result.center[0].get() - 2.0).abs() < 1e-8);
         assert!((result.center[1].get() - 1.0).abs() < 1e-8);
         assert!((result.radius.get() - 5.0_f64.sqrt()).abs() < 1e-8);
@@ -523,7 +541,7 @@ mod tests {
     fn as_on_ellipse_inside_is_negative() {
         let ellipse =
             Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(3.0) };
-        let result = as_on_ellipse(p(2.0, 0.0), ellipse);
+        let result = as_on_ellipse(p(2.0, 0.0), ellipse).unwrap();
         assert!(result.signed_distance.get() < 0.0);
     }
 
@@ -531,7 +549,7 @@ mod tests {
     fn as_on_ellipse_degenerate_ry_zero_falls_back_to_center_distance() {
         let ellipse =
             Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(0.0) };
-        let result = as_on_ellipse(p(3.0, 4.0), ellipse);
+        let result = as_on_ellipse(p(3.0, 4.0), ellipse).unwrap();
         assert_eq!(result.signed_distance.get(), 5.0);
     }
 
@@ -539,14 +557,14 @@ mod tests {
     fn as_on_polygon_inside_is_negative() {
         let polygon =
             Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
-        let (result, _) = as_on_polygon(p(5.0, 5.0), polygon);
+        let (result, _) = as_on_polygon(p(5.0, 5.0), polygon).unwrap();
         assert!(result.signed_distance.get() < 0.0);
     }
 
     #[test]
     fn as_on_polygon_picks_nearest_among_multiple_shapes_edge() {
         let near = Polygon { vertices: vec![p(20.0, 0.0), p(30.0, 0.0), p(30.0, 10.0)] };
-        let (result, _) = as_on_polygon(p(25.0, -2.0), near);
+        let (result, _) = as_on_polygon(p(25.0, -2.0), near).unwrap();
         assert_eq!(result.signed_distance.get(), 2.0);
     }
 
@@ -556,8 +574,8 @@ mod tests {
             Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
         let cw = Polygon { vertices: vec![p(0.0, 0.0), p(0.0, 10.0), p(10.0, 10.0), p(10.0, 0.0)] };
         let inside = p(5.0, 5.0);
-        let (result_ccw, _) = as_on_polygon(inside, ccw);
-        let (result_cw, _) = as_on_polygon(inside, cw);
+        let (result_ccw, _) = as_on_polygon(inside, ccw).unwrap();
+        let (result_cw, _) = as_on_polygon(inside, cw).unwrap();
         assert!(result_ccw.signed_distance.get() < 0.0);
         assert!(result_cw.signed_distance.get() > 0.0);
     }
@@ -566,15 +584,45 @@ mod tests {
     fn as_on_polygon_returns_nearest_edge_index() {
         let polygon =
             Polygon { vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)] };
-        let (_, edge_index) = as_on_polygon(p(5.0, -2.0), polygon);
+        let (_, edge_index) = as_on_polygon(p(5.0, -2.0), polygon).unwrap();
         assert_eq!(edge_index, 0);
     }
 
     #[test]
-    #[should_panic(expected = "at least 3 vertices")]
-    fn as_on_polygon_panics_for_less_than_three_vertices() {
+    fn as_on_polygon_rejects_less_than_three_vertices() {
         let polygon = Polygon { vertices: vec![p(0.0, 0.0), p(1.0, 1.0)] };
-        as_on_polygon(p(0.0, 0.0), polygon);
+        assert!(matches!(as_on_polygon(p(0.0, 0.0), polygon), Err(Error::InvalidInput)));
+    }
+
+    #[test]
+    fn nan_inputs_are_rejected_as_invalid_input() {
+        let nan = f64::NAN;
+        let line = |s: Point<2>| Line { start: s, end: p(1.0, 1.0) };
+        assert!(matches!(as_on_line(p(nan, 0.0), line(p(0.0, 0.0))), Err(Error::InvalidInput)));
+        assert!(matches!(as_on_line(p(0.0, 0.0), line(p(0.0, nan))), Err(Error::InvalidInput)));
+        let circle = |r: f64| Circle { center: p(0.0, 0.0), radius: Unit::new(r) };
+        assert!(matches!(as_on_circle(p(0.0, nan), circle(1.0)), Err(Error::InvalidInput)));
+        assert!(matches!(as_on_circle(p(0.0, 0.0), circle(nan)), Err(Error::InvalidInput)));
+        let ellipse = |rx: f64| Ellipse {
+            center: p(0.0, 0.0),
+            rx:     Unit::new(rx),
+            ry:     Unit::new(1.0),
+        };
+        assert!(matches!(as_on_ellipse(p(nan, 0.0), ellipse(2.0)), Err(Error::InvalidInput)));
+        assert!(matches!(as_on_ellipse(p(0.0, 0.0), ellipse(nan)), Err(Error::InvalidInput)));
+        let polygon = |v: Point<2>| Polygon { vertices: vec![p(0.0, 0.0), p(1.0, 0.0), v] };
+        assert!(matches!(
+            as_on_polygon(p(nan, 0.0), polygon(p(0.0, 1.0))),
+            Err(Error::InvalidInput)
+        ));
+        assert!(matches!(
+            as_on_polygon(p(0.0, 0.0), polygon(p(nan, 1.0))),
+            Err(Error::InvalidInput)
+        ));
+        assert!(matches!(
+            Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(nan, 1.0)),
+            Err(Error::InvalidInput)
+        ));
     }
 
     fn close(actual: f64, expected: f64, tolerance: f64) -> bool {
@@ -659,12 +707,12 @@ mod tests {
     /// In 3-4-5 triangles the nearest boundary point is the vertex, not the edge's line.
     #[test]
     fn as_on_polygon_nearest_convex_vertex_gives_euclidean_distance() {
-        let (result, edge) = as_on_polygon(p(13.0, 14.0), square());
+        let (result, edge) = as_on_polygon(p(13.0, 14.0), square()).unwrap();
         assert_eq!(result.signed_distance.get(), 5.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (10.0, 10.0));
         assert_eq!((edge, result.t.get()), (1, 1.0));
 
-        let (result, edge) = as_on_polygon(p(-3.0, -4.0), square());
+        let (result, edge) = as_on_polygon(p(-3.0, -4.0), square()).unwrap();
         assert_eq!(result.signed_distance.get(), 5.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (0.0, 0.0));
         assert_eq!((edge, result.t.get()), (0, 0.0));
@@ -672,7 +720,7 @@ mod tests {
 
     #[test]
     fn as_on_polygon_edge_interior_reports_clamped_t_and_projection() {
-        let (result, edge) = as_on_polygon(p(20.0, 0.5), square());
+        let (result, edge) = as_on_polygon(p(20.0, 0.5), square()).unwrap();
         assert_eq!(result.signed_distance.get(), 10.0);
         assert!(close(result.t.get(), 0.05, 1e-15));
         assert!(close(result.projected[0].get(), 10.0, 1e-15));
@@ -683,7 +731,7 @@ mod tests {
     /// (3, 3) is inside the L and its nearest boundary point is the reflex vertex (4, 4).
     #[test]
     fn as_on_polygon_reflex_vertex_inside_is_negative_with_euclidean_distance() {
-        let (result, edge) = as_on_polygon(p(3.0, 3.0), l_shape());
+        let (result, edge) = as_on_polygon(p(3.0, 3.0), l_shape()).unwrap();
         assert!(close(result.signed_distance.get(), -core::f64::consts::SQRT_2, 1e-15));
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (4.0, 4.0));
         assert_eq!((edge, result.t.get()), (2, 1.0));
@@ -691,7 +739,7 @@ mod tests {
 
     #[test]
     fn as_on_polygon_notch_outside_is_positive() {
-        let (result, edge) = as_on_polygon(p(5.0, 5.0), l_shape());
+        let (result, edge) = as_on_polygon(p(5.0, 5.0), l_shape()).unwrap();
         assert_eq!(result.signed_distance.get(), 1.0);
         assert_eq!((result.projected[0].get(), result.projected[1].get()), (5.0, 4.0));
         assert_eq!(edge, 2);
@@ -700,14 +748,14 @@ mod tests {
     #[test]
     fn as_on_polygon_vertex_sign_follows_orientation() {
         let cw = Polygon { vertices: vec![p(0.0, 0.0), p(0.0, 10.0), p(10.0, 10.0), p(10.0, 0.0)] };
-        let (outside, _) = as_on_polygon(p(13.0, 14.0), cw);
+        let (outside, _) = as_on_polygon(p(13.0, 14.0), cw).unwrap();
         assert_eq!(outside.signed_distance.get(), -5.0);
     }
 
     #[test]
     fn as_on_polygon_on_boundary_is_exactly_zero() {
-        assert_eq!(as_on_polygon(p(5.0, 0.0), square()).0.signed_distance.get(), 0.0);
-        assert_eq!(as_on_polygon(p(10.0, 10.0), square()).0.signed_distance.get(), 0.0);
+        assert_eq!(as_on_polygon(p(5.0, 0.0), square()).unwrap().0.signed_distance.get(), 0.0);
+        assert_eq!(as_on_polygon(p(10.0, 10.0), square()).unwrap().0.signed_distance.get(), 0.0);
     }
 
     #[test]
@@ -719,6 +767,7 @@ mod tests {
                 let expected = expected_signed(&polygon, q, false);
                 let actual =
                     as_on_polygon(p(q.0, q.1), Polygon { vertices: polygon.vertices.clone() })
+                        .unwrap()
                         .0
                         .signed_distance
                         .get();
@@ -738,6 +787,7 @@ mod tests {
                 let expected = expected_signed(&polygon, q, clockwise);
                 let actual =
                     as_on_polygon(p(q.0, q.1), Polygon { vertices: polygon.vertices.clone() })
+                        .unwrap()
                         .0
                         .signed_distance
                         .get();
@@ -767,6 +817,7 @@ mod tests {
                             p(q.0, q.1),
                             Polygon { vertices: polygon.vertices.clone() },
                         )
+                        .unwrap()
                         .0
                         .signed_distance
                         .get();
@@ -786,18 +837,18 @@ mod tests {
         let repeated = || Polygon {
             vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
         };
-        assert_eq!(as_on_polygon(p(13.0, 14.0), repeated()).0.signed_distance.get(), 5.0);
-        assert_eq!(as_on_polygon(p(13.0, -4.0), repeated()).0.signed_distance.get(), 5.0);
-        assert_eq!(as_on_polygon(p(9.0, 1.0), repeated()).0.signed_distance.get(), -1.0);
+        assert_eq!(as_on_polygon(p(13.0, 14.0), repeated()).unwrap().0.signed_distance.get(), 5.0);
+        assert_eq!(as_on_polygon(p(13.0, -4.0), repeated()).unwrap().0.signed_distance.get(), 5.0);
+        assert_eq!(as_on_polygon(p(9.0, 1.0), repeated()).unwrap().0.signed_distance.get(), -1.0);
 
         let collinear = || Polygon {
             vertices: vec![p(0.0, 0.0), p(5.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
         };
-        let (outside, _) = as_on_polygon(p(5.0, -2.0), collinear());
+        let (outside, _) = as_on_polygon(p(5.0, -2.0), collinear()).unwrap();
         assert_eq!(outside.signed_distance.get(), 2.0);
         assert_eq!((outside.projected[0].get(), outside.projected[1].get()), (5.0, 0.0));
-        assert_eq!(as_on_polygon(p(5.0, 2.0), collinear()).0.signed_distance.get(), -2.0);
-        assert_eq!(as_on_polygon(p(13.0, 14.0), collinear()).0.signed_distance.get(), 5.0);
+        assert_eq!(as_on_polygon(p(5.0, 2.0), collinear()).unwrap().0.signed_distance.get(), -2.0);
+        assert_eq!(as_on_polygon(p(13.0, 14.0), collinear()).unwrap().0.signed_distance.get(), 5.0);
     }
 
     /// Polygon and query both move by 1e8; the tolerance 1e-6 covers the input grid ulp(1e8) = 1.5e-8.
@@ -819,6 +870,7 @@ mod tests {
                 p(q.0 + offset, q.1 + offset),
                 Polygon { vertices: moved.vertices.clone() },
             )
+            .unwrap()
             .0
             .signed_distance
             .get();
@@ -1117,7 +1169,7 @@ mod tests {
         for (name, rx, ry, dx, dy, signed, foot) in ELLIPSE_CASES {
             let ellipse =
                 Ellipse { center: p(0.0, 0.0), rx: Unit::new(rx), ry: Unit::new(ry) };
-            let result = as_on_ellipse(p(dx, dy), ellipse);
+            let result = as_on_ellipse(p(dx, dy), ellipse).unwrap();
             let magnitude = rx.max(ry).max(dx.abs()).max(dy.abs());
             let tolerance = 1e-14 * magnitude;
             let got = result.signed_distance.get();
@@ -1132,7 +1184,7 @@ mod tests {
     fn as_on_ellipse_is_translation_invariant_for_large_center() {
         let ellipse =
             Ellipse { center: p(1e9, -5e8), rx: Unit::new(4.0), ry: Unit::new(1.0) };
-        let result = as_on_ellipse(p(1e9 + 3.0, -5e8 + 2.0), ellipse);
+        let result = as_on_ellipse(p(1e9 + 3.0, -5e8 + 2.0), ellipse).unwrap();
         assert!(close(result.signed_distance.get(), 1.2973054925552014, 1e-12));
         assert!(close(result.projected[0].get() - 1e9, 2.7090557089436533, 1e-6));
     }
@@ -1141,8 +1193,7 @@ mod tests {
     fn as_on_ellipse_non_finite_inputs_terminate() {
         let ellipse =
             || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
-        for (x, y) in [(f64::NAN, 1.0), (1.0, f64::NAN), (f64::INFINITY, 1.0), (1.0, f64::INFINITY)]
-        {
+        for (x, y) in [(f64::INFINITY, 1.0), (1.0, f64::INFINITY)] {
             let _ = as_on_ellipse(p(x, y), ellipse());
         }
     }
@@ -1152,9 +1203,9 @@ mod tests {
     fn as_on_ellipse_points_on_the_ellipse_are_zero() {
         let ellipse =
             || Ellipse { center: p(0.0, 0.0), rx: Unit::new(4.0), ry: Unit::new(1.0) };
-        assert_eq!(as_on_ellipse(p(4.0, 0.0), ellipse()).signed_distance.get(), 0.0);
-        assert_eq!(as_on_ellipse(p(0.0, 1.0), ellipse()).signed_distance.get(), 0.0);
-        let on = as_on_ellipse(p(2.0, libm::sqrt(0.75)), ellipse());
+        assert_eq!(as_on_ellipse(p(4.0, 0.0), ellipse()).unwrap().signed_distance.get(), 0.0);
+        assert_eq!(as_on_ellipse(p(0.0, 1.0), ellipse()).unwrap().signed_distance.get(), 0.0);
+        let on = as_on_ellipse(p(2.0, libm::sqrt(0.75)), ellipse()).unwrap();
         assert!(on.signed_distance.get().abs() < 1e-15, "{}", on.signed_distance.get());
     }
 
@@ -1170,7 +1221,7 @@ mod tests {
                         rx:     Unit::new(rx),
                         ry:     Unit::new(ry),
                     };
-                    let r = as_on_ellipse(p(1.0 + dx, -2.0 + dy), ellipse);
+                    let r = as_on_ellipse(p(1.0 + dx, -2.0 + dy), ellipse).unwrap();
                     let (fx, fy) = (r.projected[0].get() - 1.0, r.projected[1].get() + 2.0);
                     let d = r.signed_distance.get();
                     let scale = rx.max(ry);
@@ -1272,6 +1323,7 @@ mod tests {
                 p(offset + 1.0, offset),
                 p(offset, offset + 1.0),
             )
+            .unwrap()
             .unwrap();
             assert_eq!(c.center[0].get() - offset, 0.5, "offset {offset}");
             assert_eq!(c.center[1].get() - offset, 0.5, "offset {offset}");
@@ -1288,13 +1340,15 @@ mod tests {
                 p(4.0 * scale, 0.0),
                 p(1.0 * scale, 3.0 * scale),
             )
+            .unwrap()
             .unwrap();
             assert!(close(c.center[0].get() / scale, 2.0, 1e-14), "scale {scale}");
             assert!(close(c.center[1].get() / scale, 1.0, 1e-14), "scale {scale}");
             assert!(close(c.radius.get() / scale, libm::sqrt(5.0), 1e-14), "scale {scale}");
         }
 
-        let tiny = Circle::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5)).unwrap();
+        let tiny =
+            Circle::from_three_points(p(0.0, 0.0), p(1e-5, 0.0), p(0.0, 1e-5)).unwrap().unwrap();
         assert!(close(tiny.center[0].get() / 5e-6, 1.0, 1e-14));
         assert!(close(tiny.radius.get() / 7.0710678118654755e-6, 1.0, 1e-14));
     }
@@ -1329,6 +1383,7 @@ mod tests {
                         p(pts[1].0, pts[1].1),
                         p(pts[2].0, pts[2].1),
                     )
+                    .unwrap()
                     .unwrap();
                     let radius = c.radius.get();
                     for q in &pts {
@@ -1349,7 +1404,7 @@ mod tests {
     /// cross / longest² = 2.5e-7 is far above the relative threshold, so a circle of radius ~1e6 is returned.
     #[test]
     fn from_three_points_nearly_collinear_but_valid() {
-        let c = Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(2.0, 1e-6)).unwrap();
+        let c = Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(2.0, 1e-6)).unwrap().unwrap();
         assert!(close(c.center[0].get(), 0.5, 1e-9));
         assert!(close(c.radius.get() / 1e6, 1.0, 1e-5), "{}", c.radius.get());
         for q in [p(0.0, 0.0), p(1.0, 0.0), p(2.0, 1e-6)] {
@@ -1361,16 +1416,32 @@ mod tests {
     /// With apex height h over a unit base, cross / longest² = h and the threshold is 1e-12; the decision is scale-invariant.
     #[test]
     fn from_three_points_collinearity_threshold_is_relative_to_the_longest_side() {
-        assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 0.9e-12)).is_none());
-        assert!(Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 1.1e-12)).is_some());
-        assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 0.9e-3)).is_none());
-        assert!(Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 1.1e-3)).is_some());
+        assert!(
+            Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 0.9e-12)).unwrap().is_none()
+        );
+        assert!(
+            Circle::from_three_points(p(0.0, 0.0), p(1.0, 0.0), p(0.5, 1.1e-12)).unwrap().is_some()
+        );
+        assert!(
+            Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 0.9e-3))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            Circle::from_three_points(p(0.0, 0.0), p(1e9, 0.0), p(0.5e9, 1.1e-3))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
     fn from_three_points_rejects_coincident_points() {
-        assert!(Circle::from_three_points(p(3.0, 3.0), p(3.0, 3.0), p(3.0, 3.0)).is_none());
-        assert!(Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).is_none());
+        assert!(
+            Circle::from_three_points(p(3.0, 3.0), p(3.0, 3.0), p(3.0, 3.0)).unwrap().is_none()
+        );
+        assert!(
+            Circle::from_three_points(p(0.0, 0.0), p(1e-9, 1e-9), p(2e-9, 2e-9)).unwrap().is_none()
+        );
     }
 
     /// With v = (3, 4) and |v| = 5: w = (1, 0) gives cross -4 (-0.8), w = (7, 2) gives -4.4, w = (-1, 2) gives +2, at every offset.
@@ -1378,7 +1449,7 @@ mod tests {
     fn as_on_line_distance_is_exact_for_integer_geometry_at_any_offset() {
         for offset in [0.0, 1e6, 1e9, 1e12] {
             let line = || Line { start: p(offset, offset), end: p(offset + 3.0, offset + 4.0) };
-            let at = |wx: f64, wy: f64| as_on_line(p(offset + wx, offset + wy), line());
+            let at = |wx: f64, wy: f64| as_on_line(p(offset + wx, offset + wy), line()).unwrap();
             assert_eq!(at(1.0, 0.0).signed_distance.get(), -0.8, "offset {offset}");
             assert_eq!(at(1.0, 0.0).t.get(), 0.12, "offset {offset}");
             assert_eq!(at(7.0, 2.0).signed_distance.get(), -4.4, "offset {offset}");
@@ -1400,7 +1471,8 @@ mod tests {
                     continue;
                 }
                 let line = Line { start: p(offset, offset), end: p(offset + vx, offset + vy) };
-                let d = as_on_line(p(offset + wx, offset + wy), line).signed_distance.get();
+                let d =
+                    as_on_line(p(offset + wx, offset + wy), line).unwrap().signed_distance.get();
 
                 let cross = (vx as i64 * wy as i64 - vy as i64 * wx as i64) as f64;
                 let length_squared = vx * vx + vy * vy;

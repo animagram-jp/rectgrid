@@ -337,11 +337,11 @@ impl Handler {
         let far_unit: [GridUnit; 2] = from_fn(|d| base_unit[d] + offset[d]);
         let nearest: [GridUnit; 2] = from_fn(|d| {
             GridUnit::new(
-                self.drop_zone.center[d].get().clamp(base_unit[d].get(), far_unit[d].get()),
+                self.drop_zone.center[d].get().max(base_unit[d].get()).min(far_unit[d].get()),
             )
         });
         let zone = Circle { center: self.drop_zone.center, radius: self.drop_zone.radius };
-        let inside = as_on_circle(nearest, zone).signed_distance.get() <= 0.0;
+        let inside = as_on_circle(nearest, zone).is_ok_and(|g| g.signed_distance.get() <= 0.0);
         if inside == self.drop_zone_active {
             return vec![];
         }
