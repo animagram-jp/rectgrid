@@ -32,28 +32,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
-## Commands
-
-```bash
-# unit test
-cargo test --all-features
-
-# unit test (examples)
-cd examples && cargo test
-
-# wasm build (examples; main thread, imported memory)
-cd examples
-RUSTFLAGS="-Clink-arg=--import-memory -Clink-arg=--max-memory=134217728" \
-cargo build --release --target wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version "$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" --locked
-wasm-bindgen --target web --out-dir app --out-name app target/wasm32-unknown-unknown/release/app.wasm
-
-# auto formatter
-cargo +nightly fmt
-```
-
----
-
 ## Coordinate system
 
 - When treating rectgrid's x and y as 2D coordinates, x is the axis that becomes the width in the viewport, y is the height direction, and the origin (0,0) is the top-left corner.
@@ -135,7 +113,7 @@ cargo +nightly fmt
 
 - 与単位系とは、原点の座標が(0,...,0), 全ての軸の階差関数が定数1を返す単位系を指す。単位名をPx(pixel: picture element)とする。
 
-`geometry`モジュールを有効化するには:
+`geometry`モジュールはfeature機能で有効化できる:
 
 ```toml
 [dependencies]
