@@ -26,7 +26,7 @@ rectgrid = { version = "0.4", features = ["geometry"] }
 | 0.1.1   | Released  | 2026-07-13 | improve performance(#7) |
 | 0.2.0   | Released  | 2026-10-01 | add BBox::new() |
 | 0.3.0   | Released  | 2026-10-02 | improve algorithm and tests |
-| 0.4.0   | Scheduled | 2026-10-31 | Breaking: `Error` rename, NaN is rejected, `geometry` returns `Result` |
+| 0.4.0   | Scheduled | 2026-10-10 | Breaking: `Error` rename, NaN is rejected, `geometry` returns `Result` |
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
