@@ -1,3 +1,10 @@
+//! Signed distance from a point to a line, circle, ellipse or polygon, in unit coordinates.
+//!
+//! Each `as_on_*` function returns a [`PointOnGeometry`]: the closest point on the geometry,
+//! the signed distance to it, and a parameter `t` that locates the closest point on the
+//! geometry. The meaning of `t` is given per function. An input containing NaN is rejected
+//! with [`Error::InvalidInput`].
+
 use alloc::vec::Vec;
 use core::primitive::{f64, usize};
 
@@ -9,11 +16,19 @@ fn reject_nan(values: &[f64]) -> Result<(), Error> {
     if values.iter().any(|v| v.is_nan()) { Err(Error::InvalidInput) } else { Ok(()) }
 }
 
+/// Infinite line through two points.
 pub struct Line<const D: usize> {
+    /// Start point (`t` = 0).
     pub start: Point<D>,
+    /// End point (`t` = 1).
     pub end:   Point<D>,
 }
 
+/// Closest point on the infinite line through `line`, i.e. the orthogonal projection of `point`.
+/// `t` is not clamped: 0 at `start`, 1 at `end`, less than 0 or greater than 1 beyond them.
+/// `signed_distance` is positive when `cross(end - start, point - start) > 0`.
+/// When `start` and `end` coincide, `t` is 0 and the distance is the unsigned distance to `start`.
+///
 /// ```
 /// use rectgrid::Unit;
 /// use rectgrid::geometry::*;
@@ -58,12 +73,18 @@ pub fn as_on_line(point: [Unit; 2], line: Line<2>) -> Result<PointOnGeometry<2>,
     })
 }
 
+/// Circle given by its center and radius.
 pub struct Circle<const D: usize> {
+    /// Center.
     pub center: Point<D>,
+    /// Radius.
     pub radius: Unit,
 }
 
 impl Circle<2> {
+    /// Circle through three points. Returns `Ok(None)` when the points are collinear, i.e. when
+    /// `|cross| <= 1e-12 * longest_side²`; this test does not depend on the scale of the input.
+    ///
     /// ```
     /// use rectgrid::Unit;
     /// use rectgrid::geometry::*;
@@ -113,6 +134,11 @@ impl Circle<2> {
     }
 }
 
+/// Closest point on the circle. `t` is the angle of `point` around the center, in radians
+/// (`atan2(dy, dx)`). `signed_distance` is the distance from the center minus the radius:
+/// negative inside, positive outside. At the center, `t` is 0 and `projected` is
+/// `center + (radius, 0)`.
+///
 /// ```
 /// use rectgrid::Unit;
 /// use rectgrid::geometry::*;
@@ -149,15 +175,21 @@ pub fn as_on_circle(point: [Unit; 2], circle: Circle<2>) -> Result<PointOnGeomet
     })
 }
 
+/// Axis-aligned ellipse given by its center and semi-axes.
 pub struct Ellipse<const D: usize> {
+    /// Center.
     pub center: Point<D>,
+    /// Semi-axis along x.
     pub rx:     Unit,
+    /// Semi-axis along y.
     pub ry:     Unit,
 }
 
 /// Exact signed distance to the ellipse and its closest point (the foot of the normal), after
 /// Eberly, "Distance from a Point to an Ellipse, an Ellipsoid, or a Hyperellipsoid" (2013).
 /// `t` is the parametric (eccentric) angle of the closest point.
+/// A negative `rx` or `ry` is taken by absolute value. A zero `rx` or `ry` gives the unsigned
+/// distance to the center, with `projected` at the center.
 ///
 /// ```
 /// use rectgrid::Unit;
@@ -350,7 +382,10 @@ fn ellipse_root_reference(e0: f64, e1: f64, delta: f64, y0: f64, y1: f64) -> f64
     0.5 * (lo + hi)
 }
 
+/// Closed polygon. The last vertex connects back to the first.
 pub struct Polygon<const D: usize> {
+    /// Vertices in order. Edge `i` runs from `vertices[i]` to `vertices[i + 1]`;
+    /// the last edge runs back to `vertices[0]`.
     pub vertices: Vec<Point<D>>,
 }
 
@@ -361,6 +396,8 @@ pub struct Polygon<const D: usize> {
 /// When the nearest point is a vertex, the sign comes from the vertex pseudo-normal (the sum of the two
 /// adjacent edge normals), which is correct at reflex vertices
 /// (Bærentzen & Aanæs, "Signed Distance Computation Using the Angle Weighted Pseudonormal", 2005).
+///
+/// Returns `Err(InvalidInput)` for fewer than 3 vertices.
 ///
 /// ```
 /// use rectgrid::Unit;
@@ -471,9 +508,14 @@ pub fn as_on_polygon(
     ))
 }
 
+/// Result of the `as_on_*` functions.
 pub struct PointOnGeometry<const D: usize> {
+    /// Position of `projected` on the geometry. Its meaning is given per `as_on_*` function.
     pub t:               Parameter,
+    /// Closest point on the geometry.
     pub projected:       Point<D>,
+    /// Distance from the query point to `projected`: negative inside the geometry, positive
+    /// outside. For a line, see [`as_on_line`].
     pub signed_distance: Unit,
 }
 
