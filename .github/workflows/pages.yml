@@ -36,6 +36,11 @@ jobs:
             - name: "cargo test"
               run: cargo test --all-features
 
+            - name: "cargo doc"
+              run: cargo doc --all-features --no-deps
+              env:
+                  RUSTDOCFLAGS: "-D warnings"
+
             - name: "cargo test (examples)"
               working-directory: "./examples"
               run: cargo test --locked

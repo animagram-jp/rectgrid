@@ -20,6 +20,9 @@ cargo +nightly fmt # formatting
 # unit test
 cargo test --all-features
 
+# documentation (warnings are errors in CI)
+RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --open
+
 # unit test (examples)
 cd examples && cargo test
 
