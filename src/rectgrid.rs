@@ -11,6 +11,8 @@ use core::{
 
 use crate::Error;
 
+/// An `f64` tagged with its unit system at the type level. The tag prevents mixing values
+/// of different unit systems; see [`Px`], [`Unit`] and [`Parameter`].
 #[repr(transparent)]
 pub struct Value<Tag>(f64, PhantomData<Tag>);
 
@@ -23,10 +25,12 @@ impl<Tag> Clone for Value<Tag> {
 impl<Tag> Copy for Value<Tag> {}
 
 impl<Tag> Value<Tag> {
+    /// Wraps a raw `f64`.
     pub fn new(v: f64) -> Self {
         Self(v, PhantomData)
     }
 
+    /// Returns the raw `f64`.
     pub fn get(self) -> f64 {
         self.0
     }
@@ -123,8 +127,11 @@ impl<Tag> Div for Value<Tag> {
     }
 }
 
+/// Tag of [`Px`].
 pub struct PxTag;
+/// Tag of [`Unit`].
 pub struct UnitTag;
+/// Tag of [`Parameter`].
 pub struct ParameterTag;
 
 /// Orthogonal, axis-independent unit system extending infinitely in the positive direction from the origin.
@@ -136,8 +143,11 @@ pub type Unit = Value<UnitTag>;
 /// Unbounded local coordinate system for a single boundary box, where each side length is 1 and sign follows the unit coordinate.
 pub type Parameter = Value<ParameterTag>;
 
+/// A point in unit coordinates, one [`Unit`] per axis.
 pub type Point<const D: usize> = [Unit; D];
 
+/// Boundary box between `base` and `base + offset`, in unit coordinates.
+///
 /// Layout, one f64 per cell:
 ///
 /// ```text
@@ -174,10 +184,12 @@ impl<const D: usize> BBox<D> {
         Self { base, offset }
     }
 
+    /// Start point of the boundary box.
     pub fn base(&self) -> Point<D> {
         self.base
     }
 
+    /// Vector from `base` to the far corner. Every axis is non-negative; see [`BBox::new`].
     pub fn offset(&self) -> Point<D> {
         self.offset
     }
@@ -226,6 +238,7 @@ impl<const D: usize> BBox<D> {
 /// A pointer to a step closure `Fn(u32) -> Result<Px, Error>`; implemented for every such `Deref`.
 /// The caller picks the pointer: `Rc`, `Arc<dyn Fn(..) + Send + Sync>`, `Box`, `&F`.
 pub trait StepFn {
+    /// Returns step `i`: the px length of the cell between unit `i` and unit `i + 1`.
     fn step(&self, i: u32) -> Result<Px, Error>;
 }
 
@@ -242,8 +255,12 @@ where
 /// Pointer type used when a grid does not name one.
 pub type DefaultSteps = Rc<dyn Fn(u32) -> Result<Px, Error>>;
 
+/// Definition of one axis of a grid: where its unit coordinates lie in px.
+/// Built into an [`Accumulator`] by [`IncrementFunction::accumulate`].
+/// `P` is the pointer to the step closure of `ForwardDifference` (see [`StepFn`]);
+/// it defaults to [`DefaultSteps`].
 pub enum IncrementFunction<P = DefaultSteps> {
-    /// Fn(i) = points[i+1] - points[i]
+    /// Fn(i) = points\[i+1\] - points\[i\]
     /// OutOfIndex means boundary; the argument is the difference's index (integer).
     /// The closure must, when out of range, saturate to the last valid index within range and return it as OutOfIndex.
     /// The domain ends at the first Err: units beyond it are unevaluable even if f returns Ok again later,
@@ -251,7 +268,7 @@ pub enum IncrementFunction<P = DefaultSteps> {
     ForwardDifference(P),
     /// Finite domain. Array enumerating unit values of the interval from the origin in the positive direction.
     VectorList(Vec<Px>),
-    /// Infinite domain.
+    /// Infinite domain. NaN is invalid.
     Scale(f64),
 }
 
@@ -353,12 +370,25 @@ fn forward_difference_inverse<P: StepFn>(f: &P, target: Px) -> Result<Unit, Erro
 
 /// Forward/inverse coordinate conversion for a single axis, built from an IncrementFunction.
 pub enum Accumulator<P = DefaultSteps> {
+    /// Built from [`IncrementFunction::Scale`]. The inverse is solved directly as `target / s`.
     Scale(f64),
+    /// Built from [`IncrementFunction::VectorList`]. The inverse is solved by `partition_point`
+    /// and a linear interpolation within the located segment.
     VectorList(Vec<Px>),
+    /// Built from [`IncrementFunction::ForwardDifference`]. The inverse scans the segments.
     ForwardDifference(P),
 }
 
 impl<P: StepFn> Accumulator<P> {
+    /// unit coordinate -> px coordinate. `x` is measured from the origin of the axis; its
+    /// fractional part is interpolated linearly within the cell. Returns `OutOfIndex` past a
+    /// finite domain and `InvalidInput` for NaN.
+    ///
+    /// ```
+    /// use rectgrid::{Accumulator, IncrementFunction};
+    /// let acc: Accumulator = IncrementFunction::Scale(10.0).accumulate().unwrap();
+    /// assert_eq!(acc.forward(2.5).unwrap().get(), 25.0);
+    /// ```
     pub fn forward(&self, x: f64) -> Result<Px, Error> {
         if x.is_nan() {
             return Err(Error::InvalidInput);
@@ -384,6 +414,12 @@ impl<P: StepFn> Accumulator<P> {
     }
 
     /// px coordinate -> unit coordinate. For every variant, `inverse(forward(k))` is exactly the integer `k`.
+    ///
+    /// ```
+    /// use rectgrid::{Accumulator, IncrementFunction, Px};
+    /// let acc: Accumulator = IncrementFunction::Scale(10.0).accumulate().unwrap();
+    /// assert_eq!(acc.inverse(Px::new(25.0)).unwrap().get(), 2.5);
+    /// ```
     pub fn inverse(&self, target: Px) -> Result<Unit, Error> {
         if target.get().is_nan() {
             return Err(Error::InvalidInput);
@@ -425,11 +461,14 @@ fn vector_list_inverse(pxs: &[Px], target: Px) -> Result<Unit, Error> {
 /// Px passed in from outside is global (origin not yet subtracted) and each method subtracts `origin` itself;
 /// Px derived from a boundary box (`unit_to_px` and what is built on it) is local.
 pub struct RectGrid<const D: usize, P = DefaultSteps> {
+    /// Origin of the grid in global px. Every method subtracts it from the px passed in.
     pub origin:  [Px; D],
     accumulator: [Accumulator<P>; D],
 }
 
 impl<const D: usize, P: StepFn> RectGrid<D, P> {
+    /// Builds a grid from its origin and one definition per axis.
+    /// Returns the first error of [`IncrementFunction::accumulate`].
     pub fn new(origin: [Px; D], definitions: [IncrementFunction<P>; D]) -> Result<Self, Error> {
         let accumulator: Vec<_> =
             definitions.into_iter().map(|d| d.accumulate()).collect::<Result<_, _>>()?;
@@ -794,7 +833,7 @@ pub fn corner_test<const D: usize, P: StepFn>(
     (Some(parameter), corner)
 }
 
-/// Updates the boundary box's base/offset via a corner-handle drag. corner[d] = Some(base_side): true moves the
+/// Updates the boundary box's base/offset via a corner-handle drag. corner\[d\] = Some(base_side): true moves the
 /// base-side edge, false the offset-side edge. The new offset is at least 1.0 unit (base/offset never cross).
 ///
 /// ```
