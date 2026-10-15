@@ -1,0 +1,44 @@
+name: "CI"
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - "main"
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: "ci-${{ github.ref }}"
+    cancel-in-progress: true
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - name: "git checkout"
+              uses: actions/checkout@v7
+
+            - name: "install nightly rustfmt"
+              run: rustup toolchain install nightly --profile minimal --component rustfmt
+
+            - name: "cargo fmt"
+              run: cargo +nightly fmt --check
+
+            - name: "cargo clippy"
+              run: cargo clippy --all-features --all-targets -- -D warnings
+
+            - name: "cargo test"
+              run: cargo test --all-features
+
+            - name: "cargo doc"
+              run: cargo doc --all-features --no-deps
+              env:
+                  RUSTDOCFLAGS: "-D warnings"
+
+            - name: "cargo test (examples)"
+              working-directory: "./examples"
+              run: cargo test --locked
+

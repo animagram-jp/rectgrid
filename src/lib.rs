@@ -29,7 +29,6 @@
 //!   to a line, circle, ellipse or polygon in unit coordinates.
 
 #![no_std]
-#![warn(missing_docs)]
 extern crate alloc;
 extern crate core;
 

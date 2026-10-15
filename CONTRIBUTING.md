@@ -17,14 +17,17 @@ curl -fsSL -H "Accept: application/vnd.github.raw+json" "https://api.github.com/
 ```bash
 cargo +nightly fmt # formatting
 
+# lint (warnings are errors in CI)
+cargo clippy --all-features --all-targets -- -D warnings
+
 # unit test
 cargo test --all-features
 
 # documentation (warnings are errors in CI)
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --open
 
-# unit test (examples)
-cd examples && cargo test
+# unit test (examples; update Cargo.lock with `cargo update -p rectgrid` after a version bump)
+cd examples && cargo test --locked
 
 # wasm build (examples; main thread, imported memory)
 cd examples
