@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Andyou <andyou@animagram.jp>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 @layer css.reset {
 
     /*
@@ -42,8 +47,10 @@
         }
     }
 
-    body {
-        min-block-size: 100dvb; /* per kiso.css:63 */
+    @media screen {
+        body {
+            min-block-size: 100dvb; /* per kiso.css:63 */
+        }
     }
 
     /* Revert Modal native behavior */
