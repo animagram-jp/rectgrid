@@ -1,7 +1,6 @@
 # rectgrid
 
-[![Crates.io](https://img.shields.io/crates/v/rectgrid.svg)](https://crates.io/crates/rectgrid)
-[![docs.rs](https://img.shields.io/docsrs/rectgrid)](https://docs.rs/rectgrid)
+[![Documentation](https://docs.rs/rectgrid/badge.svg)](https://docs.rs/rectgrid)
 
 Boundary box operations on rectilinear grids with arbitrary unit systems.
 
