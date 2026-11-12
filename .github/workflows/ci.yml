@@ -30,9 +30,6 @@ jobs:
             - name: "cargo clippy"
               run: cargo clippy --all-features --all-targets -- -D warnings
 
-            - name: "cargo test"
-              run: cargo test --all-features
-
             - name: "cargo doc"
               run: cargo doc --all-features --no-deps
               env:
@@ -42,3 +39,32 @@ jobs:
               working-directory: "./examples"
               run: cargo test --locked
 
+
+    test:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - name: "git checkout"
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: "install llvm-tools"
+              run: rustup component add llvm-tools-preview
+
+            - name: "install cargo-llvm-cov"
+              uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+              with:
+                  tool: cargo-llvm-cov
+
+            - name: "cargo test"
+              run: |
+                  cargo test --doc --all-features
+                  cargo llvm-cov --lib --tests --all-features --lcov --output-path lcov.info
+
+            - name: "upload coverage"
+              uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+              with:
+                  files: lcov.info
+                  use_oidc: true
+                  fail_ci_if_error: true
