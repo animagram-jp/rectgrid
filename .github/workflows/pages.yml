@@ -54,7 +54,7 @@ jobs:
             - name: "wasm-bindgen"
               working-directory: "./examples"
               run: |
-                  wasm-bindgen --target web --out-dir app --out-name app \
+                  wasm-bindgen --target web --remove-name-section --out-dir app --out-name app \
                     target/wasm32-unknown-unknown/release/app.wasm
 
             - name: "remove wasm-bindgen package boilerplate (no suppression flag exists)"
