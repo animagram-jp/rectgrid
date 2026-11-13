@@ -4,6 +4,7 @@ use core::{
     iter::Extend,
     option::Option::{None, Some},
     primitive::{bool, f64, u8},
+    sync::atomic::Ordering,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -43,10 +44,10 @@ impl App {
             emit(&frame);
         }
 
-        #[allow(clippy::deref_addrof)]
-        unsafe {
-            *(&raw mut APP) = Some(app)
-        };
+        let slot: *mut Option<App> = &raw mut APP;
+        // SAFETY: `init` runs once on the single app thread before `process_event` /
+        // `serve_event` start reading `APP`, so no other reference exists.
+        unsafe { *slot = Some(app) };
     }
 
     /// process(Event) and FIFO queue command (layout `[event:u8][payload...]`)
@@ -118,7 +119,7 @@ impl App {
             Event::Window(WindowEvent::Scroll { x, y }) => handler.process_scroll(x, y),
             Event::Window(WindowEvent::Visibility { state }) => handler.process_visibility(state),
             Event::Window(WindowEvent::Shutdown) => {
-                unsafe { RUNNING = false };
+                RUNNING.store(false, Ordering::Relaxed);
                 (vec![], self.handler.close())
             }
         }
