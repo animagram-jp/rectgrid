@@ -1,37 +1,25 @@
 // === constants ===
 
-const CONTROL_WRITE_OFFSET = 0;
-const CONTROL_READ_OFFSET = 64;
-const CONTROL_SIZE = 2 * CONTROL_READ_OFFSET;
+const COUNTER_WRITE_OFFSET = 0;
+const COUNTER_READ_OFFSET = 64;
+const DATA_OFFSET = 128;
 const LENGTH_PREFIX = 4;
 const ALIGNMENT = 4;
 const PADDING_MARK = 0xFFFFFFFF;
 
-const EVENT_CONTROL = 0;
-const EVENT_PAYLOAD = EVENT_CONTROL + CONTROL_SIZE; // range start
-const EVENT_CAPACITY = 262144; // bytes of the ring payload
-const EVENT_FRAME_MAX = 4096;
-
-const COMMAND_CONTROL = EVENT_PAYLOAD + EVENT_CAPACITY;
-const COMMAND_PAYLOAD = COMMAND_CONTROL + CONTROL_SIZE; // range start
-const COMMAND_CAPACITY = 1048576; // bytes of the ring payload
-const COMMAND_FRAME_MAX = 65536;
-
-const ARENA_SIZE = COMMAND_PAYLOAD + COMMAND_CAPACITY;
-
 const EVENT_RING = {
-    control: EVENT_CONTROL,
-    payload: EVENT_PAYLOAD,
-    capacity: EVENT_CAPACITY,
-    frame_max: EVENT_FRAME_MAX,
+    start: 0,
+    data_size: 262144,
+    frame_max: 4096,
 };
 
 const COMMAND_RING = {
-    control: COMMAND_CONTROL,
-    payload: COMMAND_PAYLOAD,
-    capacity: COMMAND_CAPACITY,
-    frame_max: COMMAND_FRAME_MAX,
+    start: EVENT_RING.start + DATA_OFFSET + EVENT_RING.data_size,
+    data_size: 1048576,
+    frame_max: 65536,
 };
+
+const ARENA_SIZE = COMMAND_RING.start + DATA_OFFSET + COMMAND_RING.data_size;
 
 const EVENT_CANVAS = 1;
 const EVENT_RESIZE = 2;
@@ -55,13 +43,13 @@ const S = {
         maximum: MEMORY_MAXIMUM_PAGES,
     }),
     exports: null,
-    base: 0,
+    arena_offset: 0,
     buffer: null,
     int32: null,
     uint8: null,
     data_view: null,
-    event_frame: new Uint8Array(EVENT_FRAME_MAX),
-    command_frame: new Uint8Array(COMMAND_FRAME_MAX),
+    event_frame: new Uint8Array(EVENT_RING.frame_max),
+    command_frame: new Uint8Array(COMMAND_RING.frame_max),
     call_app: () => {},
 };
 
@@ -86,14 +74,14 @@ function start() {
 }
 
 async function load() {
-    const { default: init, App, arena_pointer, initialize, process_event } =
+    const { default: init, App, arena_offset, initialize, process_event } =
         await import("./app/app.js");
     await init({ memory: S.memory });
 
-    S.exports = { arena_pointer, initialize, process_event };
+    S.exports = { arena_offset, initialize, process_event };
     S.buffer = null;
     initialize();
-    S.base = arena_pointer();
+    S.arena_offset = arena_offset();
 
     S.call_app = () => { process_event(); drain(); };
 
@@ -112,7 +100,7 @@ function restart() {
 
     S.buffer = null;
     S.exports?.initialize();
-    S.base = S.exports?.arena_pointer() ?? S.base;
+    S.arena_offset = S.exports?.arena_offset() ?? S.arena_offset;
     bind();
     S.call_app();
 
@@ -124,7 +112,7 @@ function restart() {
 function drain() {
     view();
     for (;;) {
-        const length = ring_pop(COMMAND_RING, S.command_frame);
+        const length = copy_and_advance_ring(COMMAND_RING, S.command_frame);
         if (length === 0) return;
         execute(S.command_frame.subarray(0, length));
     }
@@ -329,7 +317,7 @@ function encode_shutdown_event(frame) {
  */
 function push(frame) {
     view();
-    if (!ring_push(EVENT_RING, frame)) return false;
+    if (!write_ring(EVENT_RING, frame)) return false;
 
     S.call_app();
     return true;
@@ -645,92 +633,78 @@ function view() {
 }
 
 /**
- * Appends 1 frame to a single-writer, single-reader ring. False if full.
  *
- * A frame is a record of a length prefix and the payload padded to
- * ALIGNMENT, stored contiguously. When the record does not fit before
- * the end of the payload region, the rest of the region is marked with
- * PADDING_MARK and the record is stored from the start.
- *
- * Writing the payload need not be atomic; the `Atomics.store` of the
- * write position guarantees visibility of the prior writes to the reader.
- *
- * @param {{control: number, payload: number, capacity: number, frame_max: number}} ring
+ * @param {{start: number, data_size: number, frame_max: number}} ring
  * @param {Uint8Array} source - frame to write
  * @returns {boolean} whether it was appended
  */
-function ring_push(ring, source) {
-    const { capacity, frame_max } = ring;
+function write_ring(ring, source) {
+    const { data_size, frame_max } = ring;
     if (source.length > frame_max) throw new RangeError("frame too large");
 
-    const control = S.base + ring.control;
-    const payload = S.base + ring.payload;
-    const write_index = control >> 2;
-    const read_index = (control + CONTROL_READ_OFFSET) >> 2;
+    const start = S.arena_offset + ring.start;
+    const data = S.arena_offset + ring.start + DATA_OFFSET;
+    const write_index = start >> 2;
+    const read_index = (start + COUNTER_READ_OFFSET) >> 2;
 
     const size = LENGTH_PREFIX + Math.ceil(source.length / ALIGNMENT) * ALIGNMENT;
     let write = Atomics.load(S.int32, write_index) >>> 0;
     const read = Atomics.load(S.int32, read_index) >>> 0;
     let used = (write - read) >>> 0;
-    let position = write & (capacity - 1);
+    let position = write & (data_size - 1);
 
-    const tail = capacity - position;
+    const tail = data_size - position;
     if (size > tail) {
-        if (used + tail > capacity) return false;
-        S.data_view.setUint32(payload + position, PADDING_MARK, true);
+        if (used + tail > data_size) return false;
+        S.data_view.setUint32(data + position, PADDING_MARK, true);
         write = (write + tail) >>> 0;
         Atomics.store(S.int32, write_index, write | 0);
         used += tail;
         position = 0;
     }
-    if (used + size > capacity) return false;
+    if (used + size > data_size) return false;
 
-    const offset = payload + position;
+    const offset = data + position;
     S.data_view.setUint32(offset, source.length, true);
     S.uint8.set(source, offset + LENGTH_PREFIX);
 
-    // Commit. Only now does the record become visible to the reader.
     Atomics.store(S.int32, write_index, ((write + size) >>> 0) | 0);
     return true;
 }
 
 /**
- * Copies the front frame of the ring into destination and returns its
- * length. 0 if empty.
  *
- * @param {{control: number, payload: number, capacity: number, frame_max: number}} ring
+ * @param {{start: number, data_size: number, frame_max: number}} ring
  * @param {Uint8Array} destination - copy destination
  * @returns {number} bytes copied
  */
-function ring_pop(ring, destination) {
-    const { capacity, frame_max } = ring;
-    const control = S.base + ring.control;
-    const payload = S.base + ring.payload;
-    const write_index = control >> 2;
-    const read_index = (control + CONTROL_READ_OFFSET) >> 2;
+function copy_and_advance_ring(ring, destination) {
+    const { data_size, frame_max } = ring;
+    const start = S.arena_offset + ring.start;
+    const data = S.arena_offset + ring.start + DATA_OFFSET;
+    const write_index = start >> 2;
+    const read_index = (start + COUNTER_READ_OFFSET) >> 2;
 
     let read = Atomics.load(S.int32, read_index) >>> 0;
     for (;;) {
         const write = Atomics.load(S.int32, write_index) >>> 0;
         if (read === write) return 0;
 
-        const position = read & (capacity - 1);
-        const offset = payload + position;
+        const position = read & (data_size - 1);
+        const offset = data + position;
         const header = S.data_view.getUint32(offset, true);
         if (header === PADDING_MARK) {
-            read = (read + capacity - position) >>> 0;
+            read = (read + data_size - position) >>> 0;
             Atomics.store(S.int32, read_index, read | 0);
             continue;
         }
 
         // Even if the length prefix is corrupt, this stays inside the region.
-        const length = Math.min(header, frame_max, capacity - position - LENGTH_PREFIX);
+        const length = Math.min(header, frame_max, data_size - position - LENGTH_PREFIX);
         destination.set(S.uint8.subarray(offset + LENGTH_PREFIX, offset + LENGTH_PREFIX + length));
 
         const size = LENGTH_PREFIX + Math.ceil(length / ALIGNMENT) * ALIGNMENT;
         Atomics.store(S.int32, read_index, ((read + size) >>> 0) | 0);
-        // Wakes a writer that is waiting on a full ring.
-        Atomics.notify(S.int32, read_index);
         return length;
     }
 }
