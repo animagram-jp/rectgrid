@@ -1,26 +1,63 @@
-name: "Deploy to GitHub Pages"
+name: "Deploy"
 
 on:
-    workflow_dispatch:
     push:
-        tags:
-            - "*.*.*"
+        tags: ["*.*.*"]
+    workflow_dispatch:
+        inputs:
+            github:
+                description: "deploy to GitHub Pages"
+                type: boolean
+                default: true
+            crates:
+                description: "publish to crates.io"
+                type: boolean
+                default: false
 
 permissions:
     contents: read
-    pages: write
-    id-token: write
 
 concurrency:
-    group: "pages"
+    group: "deploy"
     cancel-in-progress: false
 
 jobs:
-    deploy:
-        environment:
-            name: github-pages
-            url: ${{ steps.deployment.outputs.page_url }}
+    deploy-crates:
+        if: github.event_name == 'push' || inputs.crates
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            id-token: write
+        environment:
+            name: "crates-io"
+        steps:
+            - name: "git checkout"
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: "verify tag matches Cargo.toml version"
+              run: |
+                  version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+                  test "$version" = "${GITHUB_REF_NAME}"
+
+            - name: "crates.io authentication"
+              id: "auth"
+              uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+            - name: "cargo publish"
+              run: cargo publish --all-features
+              env:
+                  CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+    deploy-github:
+        if: github.event_name == 'push' || inputs.github
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pages: write
+            id-token: write
+        environment:
+            name: "github-pages"
+            url: ${{ steps.deployment.outputs.page_url }}
         steps:
             - name: "git checkout"
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,18 +69,6 @@ jobs:
               run: |
                   version="$(grep -A1 '^name = "wasm-bindgen"$' examples/Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')"
                   cargo install wasm-bindgen-cli --version "$version" --locked
-
-            - name: "cargo test"
-              run: cargo test --all-features
-
-            - name: "cargo doc"
-              run: cargo doc --all-features --no-deps
-              env:
-                  RUSTDOCFLAGS: "-D warnings"
-
-            - name: "cargo test (examples)"
-              working-directory: "./examples"
-              run: cargo test --locked
 
             - name: "cargo build (wasm32, main thread)"
               working-directory: "./examples"
@@ -71,7 +96,7 @@ jobs:
             - name: "upload artifact as Github Pages"
               uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
               with:
-                path: "./examples"
+                  path: "./examples"
 
             - name: "deploy to GitHub Pages"
               id: "deployment"

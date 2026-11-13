@@ -5,6 +5,10 @@ updates:
     directory: "/" # .github/workflows/*.yml
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: "cargo"
     directories:
       - "/"
@@ -12,8 +16,9 @@ updates:
     schedule:
       interval: "weekly"
     groups:
-      wasm-bindgen:
+      cargo:
         patterns:
-          - "wasm-bindgen*"
-          - "js-sys"
-          - "web-sys"
+          - "*"
+    ignore:
+      - dependency-name: "spinning_top"
+        versions: [">=0.4"]
