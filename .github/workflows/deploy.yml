@@ -70,6 +70,11 @@ jobs:
                   version="$(grep -A1 '^name = "wasm-bindgen"$' examples/Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')"
                   cargo install wasm-bindgen-cli --version "$version" --locked
 
+            - name: "install cargo-about"
+              uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+              with:
+                  tool: "cargo-about"
+
             - name: "cargo build (wasm32, main thread)"
               working-directory: "./examples"
               run: |
@@ -85,6 +90,10 @@ jobs:
             - name: "remove wasm-bindgen package boilerplate (no suppression flag exists)"
               working-directory: "./examples"
               run: rm -f app/README.md app/LICENSE
+
+            - name: "generate NOTICE"
+              working-directory: "./examples"
+              run: cargo about generate --config ../reference/about.toml --locked --output-file NOTICE ../reference/about.hbs
 
             - name: "remove build intermediates from Pages artifact"
               working-directory: "./examples"
